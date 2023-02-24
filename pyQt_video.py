@@ -27,7 +27,7 @@ class App(QWidget):
         self.driver = niDevice(args)
         self.running = self.driver.start()
         
-        self.driver.data.connect(self.receiveData)
+        self.driver.setData.connect(self.receiveData)
 
         self.cam = baslerCam(self.args)
         self.cam.changePixmap.connect(self.setImage)
@@ -161,7 +161,7 @@ class App(QWidget):
 
     #Signaling
 
-    @pyqtSlot(np.array())
+    #@pyqtSlot(object)
     def receiveData(self,datas):
         """
         if self.i%2 == 0:

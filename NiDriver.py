@@ -11,12 +11,13 @@ from queue import Queue
 
 from tools.tools import *
 
+
 from PyQt6.QtCore import pyqtSignal
 
 class niDevice():
-    data = pyqtSignal(np.array())
+    setData = pyqtSignal(object)  
 
-    def __init__(self, args, w):
+    def __init__(self, args):
         self.widowDown = False
         self.totalTime = args.time
         self.root = args.path
@@ -46,7 +47,7 @@ class niDevice():
 
         self.generateStepWave()
 
-        self.window = w
+        
 
 
     def generateStepWave(self):
@@ -78,14 +79,14 @@ class niDevice():
         exit(0)
 
     def cfg_AO_writer_task(self):
-        self.NiAlWriter.ao_channels.add_ao_voltage_chan("Dev2/ao0", min_val=- 10.0, max_val=10.0)
+        self.NiAlWriter.ao_channels.add_ao_voltage_chan("Dev1/ao0", min_val=- 10.0, max_val=10.0)
 
     def cfg_DO_writer_task(self):
-        self.NiDWriter.do_channels.add_do_chan("Dev2/port0/line0")
+        self.NiDWriter.do_channels.add_do_chan("Dev1/port0/line0")
 
     def cfg_AL_reader_task(self):
-        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev2/ai0", terminal_config = nidaqmx.constants.TerminalConfiguration.DIFF)
-        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev2/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE)  # has to match with chans_in
+        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev1/ai0", terminal_config = nidaqmx.constants.TerminalConfiguration.DIFF)
+        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE)  # has to match with chans_in
         self.NiAlReader.timing.cfg_samp_clk_timing(rate=self.samplingFreq, sample_mode=nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                             samps_per_chan=self.buffer_size)
         self.readerStreamIn = AnalogMultiChannelReader(self.NiAlReader.in_stream)
@@ -114,8 +115,9 @@ class niDevice():
                 elif data > 10:
                     data = 10
                 self.NiAlWriter.write(data)
-                setdata = np.array([self.iteration, self.sequence[self.iteration], measured[0], measured[1]])
-                self.window.receiveData(setData)
+                self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], measured[1]])
+                print(self.s)
+                self.setData.emit(self.s )
             else:
                 if self.running:
                     pass
@@ -126,9 +128,11 @@ class niDevice():
     def start(self):
         print("starting the system")
 
-        self.cfg_AL_reader_task()
         self.cfg_AO_writer_task()
+
         self.cfg_DO_writer_task()
+
+        self.cfg_AL_reader_task()
 
         threadUser = threading.Thread(target = self.askUser)
         threadProcess = threading.Thread(target = self.process)
