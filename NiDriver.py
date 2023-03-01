@@ -10,14 +10,15 @@ import threading
 from queue import Queue
 
 from tools.tools import *
+#from PyQt6.QtWidgets import PyQt_PyObject
 
+from PyQt6.QtCore import pyqtSignal,QThread
 
-from PyQt6.QtCore import pyqtSignal
-
-class niDevice():
+class niDevice(QThread):
     setData = pyqtSignal(object)  
 
     def __init__(self, args):
+        super().__init__()
         self.widowDown = False
         self.totalTime = args.time
         self.root = args.path
@@ -26,10 +27,6 @@ class niDevice():
         self.chans_in = args.chans_in
         self.que = Queue(maxsize=self.buffer_size)
         self.fileOut = "NiLog.csv"
-
-        self.NiAlReader = nidaqmx.Task()
-        self.NiAlWriter = nidaqmx.Task()
-        self.NiDWriter = nidaqmx.Task()
         
         self.bufferIn = np.zeros((self.chans_in, self.buffer_size))
         self.values = np.zeros((self.chans_in,1))
@@ -38,7 +35,7 @@ class niDevice():
         self.startTime = None
         self.readerStreamIn = None
 
-        self.kalman = KalmanF()
+        self.kalman = KalmanF(offset=0.012)
 
         self.writerFlag = False
         self.readerFlag = False
@@ -47,27 +44,29 @@ class niDevice():
 
         self.generateStepWave()
 
-        
-
+    
 
     def generateStepWave(self):
         self.sequence = np.zeros(self.samplingFreq*self.totalTime)
-        self.sequence[10*self.samplingFreq:20*self.samplingFreq] = 1 
+        self.sequence[5:1000] = 1 
+        print(self.sequence)
 
     def askUser(self):
         self.NiDWriter.write(True)
 
-        input("Press Enter to stop the process")
+        while self.running:
+            time.sleep(1)
 
 
-        print("closing")
+        print("closing, current driver")
         self.running = False
         self.NiDWriter.write(False)
 
-        while((self.writerFlag==False) | (self.readerFlag==False)):
-            time.sleep(2)
-            
-            self.closeAll()
+        while((self.writerFlag==False) & (self.readerFlag==False)):
+            time.sleep(1)
+            print("Waiting tasks to close")
+        
+        self.closeAll()
 
     def closeAll(self):
         self.NiAlReader.close()
@@ -76,7 +75,7 @@ class niDevice():
         self.writerFlag = False
         self.readerFlag = False
         self.widowDown = True
-        exit(0)
+        
 
     def cfg_AO_writer_task(self):
         self.NiAlWriter.ao_channels.add_ao_voltage_chan("Dev1/ao0", min_val=- 10.0, max_val=10.0)
@@ -95,7 +94,8 @@ class niDevice():
     def readingCallback(self, task_idx, event_type, num_samples, callback_data):
         if self.running:
             self.readerStreamIn.read_many_sample(self.bufferIn, self.samplingFreq, timeout = nidaqmx.constants.WAIT_INFINITELY)
-            self.values = np.append(self.values,np.stack(((np.mean(self.bufferIn[0,:])*5/1023-2.6)/0.015,np.mean(self.bufferIn[1])), axis = 0).reshape(2,1), axis = 1)
+            #self.values = np.append(self.values,np.stack(((np.mean(self.bufferIn[0,:])*5/1023-2.6)/0.015,np.mean(self.bufferIn[1])), axis = 0).reshape(2,1), axis = 1)
+            self.values = np.append(self.values,np.stack((np.mean(self.bufferIn[0,:]),np.mean(self.bufferIn[1])), axis = 0).reshape(2,1), axis = 1)
             self.iteration += 1
             #print("putting que: ", self.values[:,-1])
             self.que.put(self.values[:,-1])
@@ -109,15 +109,18 @@ class niDevice():
         while True:
             if self.que.empty() == False:
                 measured = self.que.get()
+                measured[0] = measured[0]/0.14
                 data  = self.kalman.filtering(measured, self.sequence[self.iteration])
                 if data < -10:
                     data = -10
                 elif data > 10:
                     data = 10
+                print(data)
                 self.NiAlWriter.write(data)
-                self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], measured[1]])
-                print(self.s)
-                self.setData.emit(self.s )
+                #self.NiAlWriter.write(self.sequence[self.iteration])
+                self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], data])#measured[1
+                #print(self.s)
+                self.setData.emit(self.s)
             else:
                 if self.running:
                     pass
@@ -126,10 +129,14 @@ class niDevice():
                     break
 
     def start(self):
+
+        self.NiAlReader = nidaqmx.Task()
+        self.NiAlWriter = nidaqmx.Task()
+        self.NiDWriter = nidaqmx.Task()
+    
         print("starting the system")
 
         self.cfg_AO_writer_task()
-
         self.cfg_DO_writer_task()
 
         self.cfg_AL_reader_task()
@@ -145,6 +152,8 @@ class niDevice():
         threadUser.start()
         threadProcess.start()
         self.NiAlReader.start()
+        self.NiAlWriter.write(0)
+        self.NiAlWriter.write(0)
         self.NiAlWriter.start()
         self.NiDWriter.start()
 

@@ -4,7 +4,7 @@ import numpy as np
 
 class KalmanF():
 
-    def __init__(self):
+    def __init__(self, offset):
         self.filter = KalmanFilter(dim_x=2, dim_z = 2)
         
         self.filter.x = np.array([0. , 0.])
@@ -15,22 +15,23 @@ class KalmanF():
         
         self.filter.P = np.eye(N = self.filter.x.shape[0])
         self.filter.Q = np.eye(N = self.filter.x.shape[0])
-        self.filter.R = np.array([[1e-2, 0],[0, 1]])
+        self.filter.R = np.array([[1e-2, 0],[0, 1000]])
 
         self.PID = PIDcontroller()
 
     def filtering(self,z,aim):
         self.filter.predict()
         self.filter.update(z)
-        out = self.PID.PID((self.filter.P[0,1]*z[0] + self.filter.P[0,1]*z[1])/(self.filter.P[0,1] + self.filter.P[0,1]), aim)
+        #out = self.PID.PID((self.filter.P[0,1]*z[0] + self.filter.P[1,1]*z[1])/(self.filter.P[0,1] + self.filter.P[1,1]), aim)
+        out = self.PID.PID(z[0], aim)
         return out
 
 class PIDcontroller():
     
     def __init__(self):
-        self.kp = 5
-        self.ki = 1e-2
-        self.kd = 1e-1
+        self.kp = 1.25
+        self.ki = 0
+        self.kd = 0
         self.integral = 0
         self.past=0
         self.error = None
@@ -44,7 +45,7 @@ class PIDcontroller():
         derivative = self.kd*(self.past-self.error)
         self.past = self.error
 
-        return prop+self.integral+derivative
+        return prop+self.integral+derivative+value
 
 
 

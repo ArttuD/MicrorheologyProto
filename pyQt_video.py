@@ -8,6 +8,8 @@ import pyqtgraph as pg
 import sys
 import numpy as np
 import cv2
+import time
+import threading
 
 from NiDriver import niDevice
 from baslerControl import baslerCam
@@ -23,14 +25,21 @@ class App(QWidget):
         self.height = 1500
         self.i = 0
         self.initUI()
+        self.data = None
 
         self.driver = niDevice(args)
-        self.running = self.driver.start()
         
         self.driver.setData.connect(self.receiveData)
 
         self.cam = baslerCam(self.args)
         self.cam.changePixmap.connect(self.setImage)
+        background = np.zeros((640, 480))
+        h, w = background.shape
+        bytesPerLine = 1 * w
+        convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Mono)
+        self.receivedFrame = convertToQtFormat.scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio)
+        self.label.setPixmap(QPixmap.fromImage(self.receivedFrame))
+
         
     def initUI(self):
         self.setGeometry(self.left, self.top, self.width, self.height)
@@ -104,16 +113,16 @@ class App(QWidget):
         
     def cfg_buttons(self):
         #Buttons
-        btnStart = QPushButton("start")
-        btnStart.pressed.connect(self.start)
-        btnStart.setStyleSheet("background-color : green")
-        self.hbutton.addWidget(btnStart)
+        self.btnStart = QPushButton("start")
+        self.btnStart.pressed.connect(self.start)
+        self.btnStart.setStyleSheet("background-color : green")
+        self.hbutton.addWidget(self.btnStart)
         
 
-        btnStop = QPushButton("stop")
-        btnStop.pressed.connect(self.stop)
-        btnStop.setStyleSheet("background-color : red")
-        self.hbutton.addWidget(btnStop)
+        self.btnStop = QPushButton("stop")
+        self.btnStop.pressed.connect(self.stop)
+        self.btnStop.setStyleSheet("background-color : red")
+        self.hbutton.addWidget(self.btnStop)
 
         btnShutDown = QPushButton("shutdown")
         btnShutDown.pressed.connect(self.shutDown)
@@ -130,22 +139,38 @@ class App(QWidget):
     def start(self):
         #Start coils
         #start measurement
-        self.cam.livestream()
-
+        #self.running = self.driver.start()
+        self.x = threading.Thread(target=self.cam.livestream)
+        self.x.start()
+        self.y = threading.Thread(target=self.driver.start)
+        self.y.start()
+        self.btnStart.setStyleSheet("background-color : white")
+        
     
     def stop(self):
-        self.cam.stopFlag()
+        self.btnStart.setStyleSheet("background-color : green")
+        self.btnStop.setStyleSheet("background-color : white")
+        self.cam.changeStopFlag()
+        self.driver.running = False
+        print("waiting threads to join")
+        self.x.join()
+        print("Closed camera succesfully!")
+        self.y.join()
+        print("Closed current driver succesfully!")
+        self.btnStop.setStyleSheet("background-color : green")
     
     def shutDown(self):
         self.cam.close()
-
-        self.clean()
+        self.close()
+        print("Shutting down")
+        exit(0)
 
     @pyqtSlot(QImage)
     def setImage(self, image):
-        self.label.setPixmap(QPixmap.fromImage(image))
+        self.receivedFrame = image
 
     def update_plot_data(self):
+        
         self.time = np.roll(self.time,-1); self.time[-1] = self.data[0]
         self.target = np.roll(self.target,-1); self.target[-1] = self.data[1]
         self.measured = np.roll(self.measured,-1); self.measured[-1] = self.data[2]
@@ -155,13 +180,14 @@ class App(QWidget):
         self.dataLineTarget.setData(self.time, self.target)
         self.dataLineMeasured.setData(self.time, self.measured)
         self.dataLineMeasuredB.setData(self.time, self.measuredB)
-        #self.view.setPixmap(QPixmap.fromImage(self.p))
         if self.data[0]>10:
             self.plotI.setXRange(self.data[0]-10, self.data[0]+10, padding=0)
+        #self.view.setPixmap(QPixmap.fromImage(self.p))
+        self.label.setPixmap(QPixmap.fromImage(self.receivedFrame))
 
     #Signaling
 
-    #@pyqtSlot(object)
+    @pyqtSlot(object)
     def receiveData(self,datas):
         """
         if self.i%2 == 0:
@@ -183,13 +209,10 @@ class App(QWidget):
         self.update_plot_data()
         self.data = None
 
-    def clean(self):
-        self.graphWidget.clear()
 
 def pymain(args):
     app = QtWidgets.QApplication(sys.argv)
     w = App(args)
-
     #w.show()
     sys.exit(app.exec())
 

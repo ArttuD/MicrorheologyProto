@@ -13,6 +13,12 @@ parser.add_argument("--chans_in", "-c", required=False, default = 2,
                     help = "buffer size for sampling")
 parser.add_argument("--time", "-t", required=False, default = 60,
                     help = "Total time of the measurement")
+parser.add_argument("--exposure", "-e", required=False, default = 25,
+                    help = "Camera's exposure time in ms")
+parser.add_argument("--framerate", "-f", required=False, default = 40,
+                    help = "Cameras framerate in fps")
+parser.add_argument("--frameCount", "-fc", required=False, default = 40*60,
+                    help = "Number of recorded images")
 
 args = parser.parse_args()
 
