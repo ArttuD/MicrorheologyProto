@@ -23,6 +23,7 @@ class niDevice(QThread):
         self.totalTime = args.time
         self.root = args.path
         self.samplingFreq = 100
+        self.resistance1 = args.FirstResis 
         self.buffer_size = round(args.buffer_size_cfg*1)
         self.chans_in = args.chans_in
         self.que = Queue(maxsize=self.buffer_size)
@@ -44,12 +45,12 @@ class niDevice(QThread):
 
         self.generateStepWave()
 
-    
+        self.currentToWrite = 0
+
 
     def generateStepWave(self):
         self.sequence = np.zeros(self.samplingFreq*self.totalTime)
         self.sequence[5:1000] = 1 
-        print(self.sequence)
 
     def askUser(self):
         self.NiDWriter.write(True)
@@ -109,16 +110,16 @@ class niDevice(QThread):
         while True:
             if self.que.empty() == False:
                 measured = self.que.get()
-                measured[0] = measured[0]/0.14
+                measured[0] = measured[0]/self.resistance1
                 data  = self.kalman.filtering(measured, self.sequence[self.iteration])
                 if data < -10:
                     data = -10
                 elif data > 10:
                     data = 10
-                print(data)
+                
                 self.NiAlWriter.write(data)
                 #self.NiAlWriter.write(self.sequence[self.iteration])
-                self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], data])#measured[1
+                self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], measured[1]])
                 #print(self.s)
                 self.setData.emit(self.s)
             else:
@@ -128,25 +129,45 @@ class niDevice(QThread):
                     self.writerFlag = True
                     break
 
-    def start(self):
+    def processTune(self):
+        while True:
+            if self.que.empty() == False:
+                measured = self.que.get()
+                measured[0] = measured[0]/self.resistance1
+                data =  self.kalman.filtering(measured, self.currentToWrite)
+                if data < -10:
+                    data = -10
+                elif data > 10:
+                    data = 10
+                self.NiAlWriter.write(data)
+                #self.NiAlWriter.write(self.sequence[self.iteration])
+                self.s  = np.array([self.iteration, data, measured[0], measured[1]])
+                #print(self.s)
+                self.setData.emit(self.s)
+            else:
+                if self.running:
+                    pass
+                else:
+                    self.writerFlag = True
+                    break
+
+    def initTasks(self):
 
         self.NiAlReader = nidaqmx.Task()
         self.NiAlWriter = nidaqmx.Task()
         self.NiDWriter = nidaqmx.Task()
-    
         print("starting the system")
 
         self.cfg_AO_writer_task()
         self.cfg_DO_writer_task()
-
         self.cfg_AL_reader_task()
 
+    def tune(self):
+        self.initTasks()
+
         threadUser = threading.Thread(target = self.askUser)
-        threadProcess = threading.Thread(target = self.process)
+        threadProcess = threading.Thread(target = self.processTune)
 
-        #input("press enter to start")
-
-        print("Generated tasks")
         self.start = datetime.now()
 
         threadUser.start()
@@ -154,6 +175,28 @@ class niDevice(QThread):
         self.NiAlReader.start()
         self.NiAlWriter.write(0)
         self.NiAlWriter.write(0)
+        
+        self.NiAlWriter.start()
+        self.NiDWriter.start()
+
+        return 1
+
+
+    def start(self):
+
+        self.initTasks()
+
+        threadUser = threading.Thread(target = self.askUser)
+        threadProcess = threading.Thread(target = self.process)
+
+        self.start = datetime.now()
+
+        threadUser.start()
+        threadProcess.start()
+        self.NiAlReader.start()
+        self.NiAlWriter.write(0)
+        self.NiAlWriter.write(0)
+        
         self.NiAlWriter.start()
         self.NiDWriter.start()
 
