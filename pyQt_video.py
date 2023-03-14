@@ -1,6 +1,6 @@
 from PyQt6 import QtWidgets, QtCore, QtGui
 from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtWidgets import (QWidget, QTextEdit, QSlider, QGraphicsScene, QGraphicsView, QWidget,QPushButton,QVBoxLayout,QHBoxLayout,QLabel)
+from PyQt6.QtWidgets import (QWidget, QTextEdit, QSlider, QGraphicsScene, QGraphicsView, QWidget,QPushButton,QVBoxLayout,QHBoxLayout,QLabel, QCheckBox)
 from PyQt6.QtGui import QImage, QPixmap
 
 from pyqtgraph import PlotWidget, plot
@@ -20,26 +20,34 @@ class App(QWidget):
         super().__init__()
         self.args = args
         self.left = 0; self.top = 0
-        self.width = 2000
-        self.height = 1500
+        self.width = 1500
+        self.height = 1000
         self.i = 0
 
-        self.data = None
+        self.liveFlag = False
+        self.drawFlag = False
+        self.trackFlag = False
+        self.feedBackFlag = False
+
 
         self.driver = niDevice(args)
         
         self.driver.setData.connect(self.receiveData)
         self.cam = baslerCam(self.args)
         self.cam.changePixmap.connect(self.setImage)
+        self.cam.position.connect(self.receiveTrackData)
         self.initUI()
         background = np.zeros((640, 480))
         h, w = background.shape
         bytesPerLine = 1 * w
-        convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Mono)
+        convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Grayscale8)
         self.receivedFrame = convertToQtFormat.scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio)
-        self.label.setPixmap(QPixmap.fromImage(self.receivedFrame))
+        self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
 
         self.tuneFlag = False
+        self.clicks = 0
+
+        self.boundaryFinal = []
 
         
     def initUI(self):
@@ -58,6 +66,7 @@ class App(QWidget):
         self.hlayout = QHBoxLayout()
         self.hbutton = QHBoxLayout()
         self.hlabels = QHBoxLayout()
+        self.accessory = QVBoxLayout()
 
         self.hlabels.setSpacing(0)
         self.hlabels.setContentsMargins(0,0,0,0)
@@ -71,19 +80,19 @@ class App(QWidget):
         self.win.show()  
 
     def cfg_image(self):
-        #Image
-        #self.scene = QGraphicsScene()#0, 0, 400, 200
-        #self.pixmap = QPixmap() #"//home.org.aalto.fi/lehtona6/data/Documents/data/newplot.png"
-        #self.pixmap = self.pixmap.scaled(600, 400, Qt.AspectRatioMode.KeepAspectRatio)
-        #self.scene.addPixmap(self.pixmap)
-        #self.view = QGraphicsView(self.scene)
-        
+
         self.label = QLabel(self)
-        #self.label.move(50, 75)
         self.label.resize(640, 480)
-        #sself.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.mousePressEvent = self.getPos
+        
+        self.accessory.addWidget(self.snapbtn)
+        self.accessory.addWidget(self.trackerCheck)
+        self.accessory.addWidget(self.feedBack)
+        self.accessory.setSpacing(2)
+        
+        self.hlabels.addLayout(self.accessory)
         self.hlabels.addWidget(self.label,QtCore.Qt.AlignmentFlag.AlignCenter)
-        #self.hlabels.setSpacing(0)
+
         self.hlabels.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.hlabels.setSpacing(200)
         self.hlabels.setContentsMargins(0,0,0,0)
@@ -95,11 +104,13 @@ class App(QWidget):
         #Plots
         self.plotI = pg.PlotWidget()
         self.plotB = pg.PlotWidget()
+        self.plotTrack = pg.PlotWidget()
 
         self.initData()
 
         self.dataLineTarget = self.plotI.plot(x=self.time, y=self.target, pen=pg.mkPen(color="red"), symbol='o', symbolSize=10, row = 0, col = 0, name = "target")
         self.dataLineMeasured = self.plotI.plot(x=self.time, y=self.measured, pen=pg.mkPen(color="blue"), symbol='s', symbolSize=10, row = 0, col = 0, name = "Measured current")
+      
         #self.dataLineMeasuredB = self.plotI.plot(x=self.time, y=self.measuredIB, pen=pg.mkPen(color="green"), symbol='t', symbolSize=10, row = 0, col = 0, name = "Measured current from B")
         
         self.plotI.addLegend()
@@ -107,7 +118,7 @@ class App(QWidget):
         self.plotI.setLabel("left", "Current [A]", **self.styles)
         self.plotI.setLabel("bottom", "Time [s]", **self.styles)
         self.plotI.showGrid(x=True, y=True)
-        self.plotI.setXRange(0, 10, padding=0, update = False)
+        self.plotI.setXRange(0, 100, padding=0, update = False)
 
         self.dataLineMeasuredB = self.plotB.plot(x=self.time, y=self.measuredB, pen=pg.mkPen(color="green"), symbol='t', symbolSize=10, row = 0, col = 0, name = "Measured B")
         
@@ -115,13 +126,22 @@ class App(QWidget):
         self.plotB.setLabel("left", "B [T]", **self.styles)
         self.plotB.setLabel("bottom", "Time [s]", **self.styles)
         self.plotB.showGrid(x=True, y=True)
-        self.plotB.setXRange(0, 10, padding=0, update = False)
+        self.plotB.setXRange(0, 100, padding=0, update = False)
 
-        self.plotI.resize(self.width/2,50)
-        self.plotB.resize(self.width/2,50)
+        self.TrackLine = self.plotTrack.plot(x=self.trackX, y=self.trackY, pen=pg.mkPen(color="green"), symbol='t', symbolSize=10, row = 0, col = 0, name = "Track")
+        self.plotTrack.setTitle("Tracker", color="r", size = "15pt")
+        self.plotTrack.setLabel("left", "y-coordinate", **self.styles)
+        self.plotTrack.setLabel("bottom", "x-coordinate", **self.styles)
+        self.plotTrack.showGrid(x=True, y=True)
+        self.plotTrack.setXRange(0, 2048, padding=0, update = False)
+        self.plotTrack.setYRange(0, 1536, padding=0, update = False)        
+        
+        #self.plotI.resize(self.width/2,50)
+        #self.plotB.resize(self.width/2,50)
 
         self.hlayout.addWidget(self.plotI)  
         self.hlayout.addWidget(self.plotB)
+        self.hlayout.addWidget(self.plotTrack)
         self.vlayout.addLayout(self.hlayout)  
 
     def textLabel(self):
@@ -130,22 +150,33 @@ class App(QWidget):
 
         self.vlayout.addWidget(self.textField)
 
+
     def initData(self):
         #Init Data
-        self.time = np.zeros(100)
-        self.target = np.zeros(100)
-        self.measured = np.zeros(100)
-        #self.measuredIB = np.zeros(100)
-
-        self.measuredB = np.zeros(100)
+        self.time = np.zeros(50)
+        self.target = np.zeros(50)
+        self.measured = np.zeros(50)
+        self.measuredB = np.zeros(50)
+        self.trackX = np.zeros(50)
+        self.trackY = np.zeros(50)
 
     def cfg_buttons(self):
+        
         #Buttons
         self.btnStart = QPushButton("start")
         self.btnStart.pressed.connect(self.start)
         self.btnStart.setStyleSheet("background-color : green")
         self.hbutton.addWidget(self.btnStart)
+
+        self.CalibBtn = QPushButton("Tune")
+        self.CalibBtn.pressed.connect(self.calibrate)
+        self.CalibBtn.setStyleSheet("background-color : green")
+        self.hbutton.addWidget(self.CalibBtn)
         
+        self.streamBtn = QPushButton("Video Stream")
+        self.streamBtn.pressed.connect(self.livestream)
+        self.streamBtn.setStyleSheet("background-color : green")
+        self.hbutton.addWidget(self.streamBtn)
 
         self.btnStop = QPushButton("stop")
         self.btnStop.pressed.connect(self.stop)
@@ -157,16 +188,21 @@ class App(QWidget):
         btnShutDown.setStyleSheet("background-color : red")
         self.hbutton.addWidget(btnShutDown)
     
-        self.CalibBtn = QPushButton("Tune")
-        self.CalibBtn.pressed.connect(self.calibrate)
-        self.CalibBtn.setStyleSheet("background-color : green")
-        self.hbutton.addWidget(self.CalibBtn)
-
         self.vlayout.addLayout(self.hbutton)
+
+        self.snapbtn = QPushButton("snap")
+        self.snapbtn.pressed.connect(self.snapImage)
+        self.snapbtn.setStyleSheet("background-color : blue")
+
+        self.trackerCheck = QCheckBox("Track")
+        self.trackerCheck.stateChanged.connect(self.checkTrack)
+
+        self.feedBack = QCheckBox("FeedBack")
+        self.feedBack.stateChanged.connect(self.checkFeed)
 
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
-        self.sliderR1.setRange(0,50)
+        self.sliderR1.setRange(0,1000)
         self.sliderR1.setValue(15)
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
@@ -200,14 +236,82 @@ class App(QWidget):
 
         self.hlabels.addLayout(self.Slider1Layout)
         self.hlabels.addLayout(self.Slider2Layout)
-        
+
+    def checkFeed(self,state):
+        if state == 2:
+            self.feedBackFlag = True 
+            self.driver.feedBackFlag = True
+        else:
+            self.feedBackFlag = False
+            self.driver.feedBackFlag = False
+
+    def checkTrack(self,state):
+        if state == 2:
+            self.trackFlag = True
+            self.cam.trackFlag = True
+        else:
+            self.trackFlag = False
+            self.cam.trackFlag = False
+
+
+    def livestream(self):
+        if self.liveFlag == False:
+            print("starting Camera")
+            self.x = threading.Thread(target=self.cam.livestream)
+            self.x.start()
+            self.streamBtn.setStyleSheet("background-color : red")
+            self.liveFlag = True
+        else:
+            print("closing camera")
+            self.cam.changeStopFlag()
+            self.x.join()
+            self.liveFlag = False
+            self.streamBtn.setStyleSheet("background-color : green")
+
+    def snapImage(self):
+        self.snapbtn.setStyleSheet("background-color : white")
+        self.snapThread = threading.Thread(target=self.cam.snapImage)
+        self.snapThread.start()
+
     def updateI(self, value):
         self.sliderILabel.setText(f'Current value: {value/100}')
         self.driver.currentToWrite = value/100
 
+    def getPos(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            x = event.pos().x()
+            y = event.pos().y()
+            self.boundaryFinal.append([(x,y)])
+            self.clicks += 1
+        
+        if self.clicks == 2:
+            self.clicks = 0
+            self.x1 = self.boundaryFinal[0][0][0] 
+            self.x2 = self.boundaryFinal[1][0][0] 
+            self.y1 = self.boundaryFinal[0][0][1]
+            self.y2 = self.boundaryFinal[1][0][1]
+            self.drawRectangle()
+            self.cam.finalboundaries = self.boundaryFinal
+            self.cam.initTracker()
+            #self.boundaryFinal = []
+            self.snapbtn.setStyleSheet("background-color : blue")
+
+    def drawRectangle(self):
+        canvas = self.label.pixmap()
+        painter = QtGui.QPainter(canvas)
+        pen = QtGui.QPen()
+        pen.setWidth(3)
+        pen.setColor(QtGui.QColor("#EB5160"))
+        painter.setPen(pen)
+        width = self.x2 - self.x1
+        height = self.y2 - self.y1
+        painter.drawRect(self.x1, self.y1, width, height)
+        painter.end()
+        self.label.setPixmap(canvas)
+
+
     def calibrate(self):
         self.CalibBtn.setStyleSheet("background-color : white")
-        print("Gratz you pressed the buttom")
         self.xTune = threading.Thread(target=self.driver.tune)
         self.xTune.start()
         self.tuneFlag = True
@@ -219,12 +323,15 @@ class App(QWidget):
         self.driver.resistance1 = value/100
 
     def start(self):
-        print(self.input.toPlainText())
-        self.cam.path = self.input.toPlainText()
-        self.x = threading.Thread(target=self.cam.livestream)
-        self.x.start()
+        print("saving to", self.textField.toPlainText())
+        self.cam.path = self.textField.toPlainText()
+
         self.y = threading.Thread(target=self.driver.start)
         self.y.start()
+        time.sleep(5)
+        print("starting Camera")
+        self.x = threading.Thread(target=self.cam.recordMeasurement)
+        self.x.start()
         self.btnStart.setStyleSheet("background-color : white")
         
     
@@ -237,7 +344,7 @@ class App(QWidget):
             self.xTune.join()
             print("Closed current driver succesfully!")
             self.driver = niDevice(self.args)
-            self.driver.resistance1 = self.sliderI.value()/100
+            self.driver.resistance1 = self.sliderR1.value()/100
             self.driver.currentToWrite = 0
             self.driver.setData.connect(self.receiveData)
             self.initData()
@@ -245,8 +352,12 @@ class App(QWidget):
             self.dataLineTarget.setData(self.time, self.target)
             self.dataLineMeasured.setData(self.time, self.measured)
             self.dataLineMeasuredB.setData(self.time, self.measuredB)
-            self.plotI.setXRange(0, 10, padding=0)
-            self.plotB.setXRange(0, 10, padding=0)
+            self.TrackLine.setData(self.time, self.measuredB)
+            self.plotTrack.setXRange(0, 2048, padding=0, update = False)
+            self.plotTrack.setYRange(0, 1536, padding=0, update = False)    
+
+            self.plotI.setXRange(0, 100, padding=0)
+            self.plotB.setXRange(0, 100, padding=0)
 
             self.tuneFlag = False
             self.btnStop.setStyleSheet("background-color : red")            
@@ -261,15 +372,15 @@ class App(QWidget):
             self.y.join()
             print("Closed current driver succesfully!")
             self.driver = niDevice(self.args)
-            self.driver.resistance1 = self.sliderI.value()/100
+            self.driver.resistance1 = self.sliderR1.value()/100
             self.driver.currentToWrite = 0
             self.driver.setData.connect(self.receiveData)
             self.initData()
             self.dataLineTarget.setData(self.time, self.target)
             self.dataLineMeasured.setData(self.time, self.measured)
             self.dataLineMeasuredB.setData(self.time, self.measuredB)
-            self.plotI.setXRange(0, 10, padding=0)
-            self.plotB.setXRange(0, 10, padding=0)
+            self.plotI.setXRange(0, 100, padding=0)
+            self.plotB.setXRange(0, 100, padding=0)
             self.btnStop.setStyleSheet("background-color : red")
     
     def shutDown(self):
@@ -281,48 +392,36 @@ class App(QWidget):
     @pyqtSlot(QImage)
     def setImage(self, image):
         self.receivedFrame = image
+        self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
+        #if self.trackFlag:
+        #    self.drawRectangle()
 
-    def update_plot_data(self):
-        
-        self.time = np.roll(self.time,-1); self.time[-1] = self.data[0]
-        self.target = np.roll(self.target,-1); self.target[-1] = self.data[1]
-        self.measured = np.roll(self.measured,-1); self.measured[-1] = self.data[2]
+    @pyqtSlot(object)
+    def receiveData(self,data):
+        self.time = np.roll(self.time,-1); self.time[-1] = data[0]
+        self.target = np.roll(self.target,-1); self.target[-1] = data[1]
+        self.measured = np.roll(self.measured,-1); self.measured[-1] = data[2]
         
         self.dataLineTarget.setData(self.time, self.target)
         self.dataLineMeasured.setData(self.time, self.measured)
 
-        self.measuredB = np.roll(self.measuredB,-1); self.measuredB[-1] = self.data[3]
+        self.measuredB = np.roll(self.measuredB,-1); self.measuredB[-1] = data[3]
         self.dataLineMeasuredB.setData(self.time, self.measuredB)
         
-        if self.data[0]>10:
-            self.plotI.setXRange(self.data[0]-10, self.data[0]+10, padding=0)
-            self.plotB.setXRange(self.data[0]-10, self.data[0]+10, padding=0)
-        #self.view.setPixmap(QPixmap.fromImage(self.p))
-        self.label.setPixmap(QPixmap.fromImage(self.receivedFrame))
-
-    #Signaling
+        if data[0]>100:
+            self.plotI.setXRange(data[0]-100, data[0]+100, padding=0)
+            self.plotB.setXRange(data[0]-100, data[0]+100, padding=0)
 
     @pyqtSlot(object)
-    def receiveData(self,datas):
-        """
-        if self.i%2 == 0:
-            img = cv2.imread("//home.org.aalto.fi/lehtona6/data/Documents/data/newplot.png")
-            h, w, ch = img.shape
-            bytesPerLine = ch * w
-            convertToQtFormat = QImage(img, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-            self.p = convertToQtFormat.scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio)
-        else:
-            img = cv2.imread("//home.org.aalto.fi/lehtona6/data/Documents/data/pins.png")
-            h, w, ch = img.shape
-            bytesPerLine = ch * w
-            convertToQtFormat = QImage(img, w, h, bytesPerLine, QImage.Format.Format_RGB888)
-            self.p = convertToQtFormat.scaled(640, 480, Qt.AspectRatioMode.KeepAspectRatio)
-        #print(self.i)
-        self.i += 1
-        """
-        self.data = datas
-        self.update_plot_data()
-        self.data = None
+    def receiveTrackData(self,data):
+        self.x2 = data[1] - int((2048-640)/2)
+        self.x1 = data[0] - int((2048-640)/2)
+        self.y2 = data[3] - int((1536-480)/2)
+        self.y1 = data[2] - int((1536-480)/2)
+        self.trackX = np.roll(self.trackX,-1); self.trackX[-1] = int((data[1]-data[0])/2)+data[1]
+        self.trackY = np.roll(self.trackY,-1); self.trackY[-1] = int((data[3]-data[2])/2)+data[1]
+
+        self.TrackLine.setData(self.trackX, self.trackY)
 
 
 def pymain(args):

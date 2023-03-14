@@ -1,5 +1,5 @@
 import nidaqmx
-from nidaqmx.stream_readers import AnalogMultiChannelReader
+from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
 
 from datetime import datetime
 import time
@@ -9,13 +9,14 @@ import numpy as np
 import threading
 from queue import Queue
 
+
 from tools.tools import *
 #from PyQt6.QtWidgets import PyQt_PyObject
 
 from PyQt6.QtCore import pyqtSignal,QThread
 
 class niDevice(QThread):
-    setData = pyqtSignal(object)  
+    setData = pyqtSignal(object)
 
     def __init__(self, args):
         super().__init__()
@@ -46,14 +47,20 @@ class niDevice(QThread):
         self.generateStepWave()
 
         self.currentToWrite = 0
+        self.MgOffset = 0
+
+        self.feedBackFlag = False
+
+    
 
 
     def generateStepWave(self):
         self.sequence = np.zeros(self.samplingFreq*self.totalTime)
-        self.sequence[5:1000] = 1 
+        self.sequence[100:1000] = 0.5 
 
     def askUser(self):
-        self.NiDWriter.write(True)
+        self.NiDWriter.start()
+        self.NiDWriter.write(True, 1000)
 
         while self.running:
             time.sleep(1)
@@ -61,7 +68,7 @@ class niDevice(QThread):
 
         print("closing, current driver")
         self.running = False
-        self.NiDWriter.write(False)
+        self.NiDWriter.write(False, 1000)
 
         while((self.writerFlag==False) & (self.readerFlag==False)):
             time.sleep(1)
@@ -70,6 +77,11 @@ class niDevice(QThread):
         self.closeAll()
 
     def closeAll(self):
+        for i in range(10):
+            self.NiAlWriter.write(0,1000)
+        self.NiAlReader.stop()
+        self.NiAlWriter.stop()
+        self.NiDWriter.stop()
         self.NiAlReader.close()
         self.NiAlWriter.close()
         self.NiDWriter.close()
@@ -86,7 +98,7 @@ class niDevice(QThread):
 
     def cfg_AL_reader_task(self):
         self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev1/ai0", terminal_config = nidaqmx.constants.TerminalConfiguration.DIFF)
-        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE)  # has to match with chans_in
+        self.NiAlReader.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE, min_val = 0, max_val=5)  # has to match with chans_in
         self.NiAlReader.timing.cfg_samp_clk_timing(rate=self.samplingFreq, sample_mode=nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                             samps_per_chan=self.buffer_size)
         self.readerStreamIn = AnalogMultiChannelReader(self.NiAlReader.in_stream)
@@ -94,11 +106,9 @@ class niDevice(QThread):
 
     def readingCallback(self, task_idx, event_type, num_samples, callback_data):
         if self.running:
-            self.readerStreamIn.read_many_sample(self.bufferIn, self.samplingFreq, timeout = nidaqmx.constants.WAIT_INFINITELY)
-            #self.values = np.append(self.values,np.stack(((np.mean(self.bufferIn[0,:])*5/1023-2.6)/0.015,np.mean(self.bufferIn[1])), axis = 0).reshape(2,1), axis = 1)
-            self.values = np.append(self.values,np.stack((np.mean(self.bufferIn[0,:]),np.mean(self.bufferIn[1])), axis = 0).reshape(2,1), axis = 1)
+            self.readerStreamIn.read_many_sample(self.bufferIn, self.buffer_size, timeout = nidaqmx.constants.WAIT_INFINITELY)
+            self.values = np.append(self.values,np.stack((np.mean(self.bufferIn[0,:]),np.mean(self.bufferIn[1,:])), axis = 0).reshape(2,1), axis = 1)
             self.iteration += 1
-            #print("putting que: ", self.values[:,-1])
             self.que.put(self.values[:,-1])
         else:
             print("shutting down")
@@ -106,18 +116,39 @@ class niDevice(QThread):
     
         return 0
     
+    def calibrateMgSensor(self):
+        calibR = nidaqmx.Task()
+        calibR.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE, min_val = 0, max_val=5)  # has to match with chans_in
+        datastream = AnalogSingleChannelReader(calibR.in_stream)
+        calibR.start()
+        dataBuffer = np.zeros(1000)
+        print("calibrating Mg Sensor")
+        for i in range(1000):
+            dataBuffer[i] = datastream.read_one_sample()
+            time.sleep(0.0001)
+        self.MgOffset = np.mean(dataBuffer)
+        print("done sampling, Offset: ", self.MgOffset)
+        dataBuffer = np.empty(1)
+        calibR.close()
+        calibR = None
+
     def process(self):
+        self.NiAlWriter.start()
+        for i in range(10):
+            self.NiAlWriter.write(0,1000)
+        
         while True:
             if self.que.empty() == False:
                 measured = self.que.get()
                 measured[0] = measured[0]/self.resistance1
-                data  = self.kalman.filtering(measured, self.sequence[self.iteration])
+                measured[1] = measured[1]-self.MgOffset
+                data  = self.kalman.filtering(measured, self.sequence[self.iteration])*self.resistance1
                 if data < -10:
                     data = -10
                 elif data > 10:
                     data = 10
                 
-                self.NiAlWriter.write(data)
+                self.NiAlWriter.write(data,1000)
                 #self.NiAlWriter.write(self.sequence[self.iteration])
                 self.s  = np.array([self.iteration, self.sequence[self.iteration], measured[0], measured[1]])
                 #print(self.s)
@@ -130,18 +161,26 @@ class niDevice(QThread):
                     break
 
     def processTune(self):
+        self.NiAlWriter.start()
+        for i in range(10):
+            self.NiAlWriter.write(0,1000)
         while True:
             if self.que.empty() == False:
                 measured = self.que.get()
                 measured[0] = measured[0]/self.resistance1
-                data =  self.kalman.filtering(measured, self.currentToWrite)
+                measured[1] = measured[1]-self.MgOffset
+                if self.feedBackFlag:
+                    kalmanOut =  self.kalman.filtering(measured, self.currentToWrite)
+                    data = kalmanOut*self.resistance1
+                else:
+                    data = self.currentToWrite*self.resistance1
                 if data < -10:
                     data = -10
                 elif data > 10:
                     data = 10
-                self.NiAlWriter.write(data)
+                self.NiAlWriter.write(data,1000)
                 #self.NiAlWriter.write(self.sequence[self.iteration])
-                self.s  = np.array([self.iteration, data, measured[0], measured[1]])
+                self.s  = np.array([self.iteration, self.currentToWrite, measured[0], measured[1]])
                 #print(self.s)
                 self.setData.emit(self.s)
             else:
@@ -171,19 +210,15 @@ class niDevice(QThread):
         self.start = datetime.now()
 
         threadUser.start()
+        self.calibrateMgSensor()
         threadProcess.start()
-        self.NiAlReader.start()
-        self.NiAlWriter.write(0)
-        self.NiAlWriter.write(0)
         
-        self.NiAlWriter.start()
-        self.NiDWriter.start()
+        self.NiAlReader.start()
 
         return 1
 
 
     def start(self):
-
         self.initTasks()
 
         threadUser = threading.Thread(target = self.askUser)
@@ -192,13 +227,12 @@ class niDevice(QThread):
         self.start = datetime.now()
 
         threadUser.start()
+        self.calibrateMgSensor()
         threadProcess.start()
         self.NiAlReader.start()
-        self.NiAlWriter.write(0)
-        self.NiAlWriter.write(0)
-        
-        self.NiAlWriter.start()
-        self.NiDWriter.start()
+
+    
+
 
         return 1
 

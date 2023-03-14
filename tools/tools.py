@@ -23,13 +23,14 @@ class KalmanF():
         self.filter.predict()
         self.filter.update(z)
         #out = self.PID.PID((self.filter.P[0,1]*z[0] + self.filter.P[1,1]*z[1])/(self.filter.P[0,1] + self.filter.P[1,1]), aim)
+        #print("going to PID",z[0], aim)
         out = self.PID.PID(z[0], aim)
         return out
 
 class PIDcontroller():
     
     def __init__(self):
-        self.kp = 1.25
+        self.kp = 15
         self.ki = 0
         self.kd = 0
         self.integral = 0
@@ -45,7 +46,13 @@ class PIDcontroller():
         derivative = self.kd*(self.past-self.error)
         self.past = self.error
 
-        return prop+self.integral+derivative+value
+        return prop+self.integral+derivative+aim
+    
+def remap(value, OldMin, OldMax, NewMin, NewMax):
+    OldRange = (OldMax - OldMin)  
+    NewRange = (NewMax - NewMin)  
+    NewValue = (((value - OldMin) * NewRange) / OldRange) + NewMin
+    return NewValue
 
 
 

@@ -1,82 +1,40 @@
 import numpy as np
 import cv2
-
+import pickle
 
 class tracker():
 
-    def __init__(self):
+    def __init__(self,boundaries):
         self.frame = None
         self.refPt = []
         self.fBound = []
+        #rescaled = 640x480 and init 2048x1536
         self.w = None
         self.h = None
         self.k = None
-        self.x = None
-        self.x2 = None
-        self.y = None
-        self.y2 = None
+        self.x = boundaries[0][0][0]+ int((2048-640)/2)
+        self.x2 = boundaries[1][0][0] + int((2048-640)/2)
+        self.y = boundaries[0][0][1]+ int((1536-480)/2)
+        self.y2 = boundaries[1][0][1] + int((1536-480)/2)
         self.viz = True
         self.cap = None
         self.col = (0, 255, 0)
         self.Dict = {"x":[],"y":[],"t":[]}
         self.t = 0
 
-    def click_events(self,event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            #if len(self.fBound) > 2:
-            #    self.refPt = []
-            #    self.fBound = []
-            self.refPt = [(x, y)]
-        elif event == cv2.EVENT_LBUTTONUP:
-            self.refPt.append((x, y))
-            self.fBound.append((self.refPt[0],self.refPt[1]))
+    def main(self, img):
+        self.frame = img
+        self.w,self.h = self.frame.shape
+        imgOut = np.copy(self.frame)
+        self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
+        self.ProcessCrop()
+        return np.array([self.x,self.x2,self.y, self.y2])
 
-            cv2.rectangle(self.frame, self.refPt[0], self.refPt[1], self.col, 4)
-            cv2.imshow("win", self.frame)
-        elif event == cv2.EVENT_MOUSEMOVE and flags == cv2.EVENT_FLAG_LBUTTON:
-            clone = self.frame.copy()
-            cv2.rectangle(clone, self.refPt[0], (x, y), self.col, 4)
-            cv2.imshow("win", clone)
 
-    def chooseTarget(self):
-        cv2.namedWindow("win",cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback("win", self.click_events)
-        cv2.imshow("win", self.frame)
-        self.k = cv2.waitKey(0) & 0xFF
-
-        cv2.destroyAllWindows()
-        self.y = int(self.fBound[0][0][0])
-        self.y2 = int(self.fBound[0][1][0])
-        self.x = int(self.fBound[0][0][1])
-        self.x2 = int(self.fBound[0][1][1])
-
-    def main(self, path):
-        self.cap = cv2.VideoCapture(path)
-        self.frameNum = 0
-        while self.cap.isOpened():
-            frame_exist, self.frame = self.cap.read()
-            if not frame_exist:
-                self.closeAll()
-                break
-            
-            self.w,self.h,_ = self.frame.shape
-            self.increase_brightness()
-
-            imgOut = np.copy(self.frame)
-            if self.frameNum == 0:
-                self.chooseTarget()
-
-                self.frame = imgOut
-            
-            
-            cv2.namedWindow("win",cv2.WINDOW_NORMAL)
-            self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
-            
-            self.ProcessCrop()
-            self.frameNum +=1
 
     def ProcessCrop(self):
-        self.frameCrop = cv2.cvtColor(self.frameCrop, cv2.COLOR_BGR2GRAY)
+
+        #self.frameCrop = cv2.cvtColor(self.frameCrop, cv2.COLOR_BGR2GRAY)
         ret3,binary = cv2.threshold(self.frameCrop,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         if binary is None:
             binary = np.zeros_like(self.frameCrop)
@@ -87,8 +45,6 @@ class tracker():
         radius = -1
         if contours:
             biggest = max(contours, key = cv2.contourArea)
-            #(x_,y_),radius = cv2.minEnclosingCircle(biggest)
-            #center = (int(x_),int(y_))
         else:
             biggest = np.zeros_like(binary)
 
@@ -113,13 +69,15 @@ class tracker():
         self.y += shift_y 
         self.y2 += shift_y
         self.validateCoordinates()
-        if self.viz:
-            self.displayFrame()
         self.Dict["y"].append((self.y2+self.y)/2)
         self.Dict["x"].append((self.x2+self.x)/2)
         self.Dict["t"].append(self.t)
         self.t += 1
-        
+
+    def saveData(self,path):
+        # save dictionary to person_data.pkl file
+        with open(os.path.join(path,"trackingData"), 'wb') as fp:
+            pickle.dump(self.Dict, fp)
 
     def validateCoordinates(self):
         # validate that coordinates are inside image
@@ -148,8 +106,33 @@ class tracker():
         self.y = int(self.y)
         self.y2 = int(self.y2)
 
+    def closeAll(self):
+        self.cap.release()
+        cv2.destroyAllWindows()
 
-    def displayFrame(self):
+
+if __name__ == "__main__":
+
+    videoPath = "//home.org.aalto.fi/lehtona6/data/Documents/data/recording.avi"
+
+    track = tracker()
+    track.main(videoPath)
+
+
+
+    """
+        #Incease birghtness if the video is dark (visualization)
+        def increase_brightness(self, value=60):
+        hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+
+        lim = 255 - value
+        v[v > lim] = 255
+        v[v <= lim] += value
+
+        final_hsv = cv2.merge((h, s, v))
+        self.frame = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+        def displayFrame(self):
         #Draw boxes
         start_pos = (int(np.round(self.y)),int(np.round(self.x)))
         end_pos = (int(np.round(self.y2)),int(np.round(self.x2)))
@@ -162,26 +145,52 @@ class tracker():
             self.closeAll()
             exit(0)
 
-    def closeAll(self):
-        self.cap.release()
-        cv2.destroyAllWindows()
+        def main(self, path):
+        self.cap = cv2.VideoCapture(path)
+        self.frameNum = 0
+        while self.cap.isOpened():
+            frame_exist, self.frame = self.cap.read()
+            if not frame_exist:
+                self.closeAll()
+                break
+            
+            self.w,self.h,_ = self.frame.shape
+            self.increase_brightness()
 
-    #Incease birghtness if the video is dark (visualization)
-    def increase_brightness(self, value=60):
-        hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
+            imgOut = np.copy(self.frame)
+            if self.frameNum == 0:
+                self.chooseTarget()
 
-        lim = 255 - value
-        v[v > lim] = 255
-        v[v <= lim] += value
+                self.frame = imgOut
+            
+            
+            cv2.namedWindow("win",cv2.WINDOW_NORMAL)
+            self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
+            
+            self.ProcessCrop()
+            self.frameNum +=1
 
-        final_hsv = cv2.merge((h, s, v))
-        self.frame = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+        def chooseTarget(self):
+        self.y = int(self.fBound[0][0][0])
+        self.y2 = int(self.fBound[0][1][0])
+        self.x = int(self.fBound[0][0][1])
+        self.x2 = int(self.fBound[0][1][1])
 
 
-if __name__ == "__main__":
+    def click_events(self,event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            #if len(self.fBound) > 2:
+            #    self.refPt = []
+            #    self.fBound = []
+            self.refPt = [(x, y)]
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.refPt.append((x, y))
+            self.fBound.append((self.refPt[0],self.refPt[1]))
 
-    videoPath = "//home.org.aalto.fi/lehtona6/data/Documents/data/recording.avi"
-
-    track = tracker()
-    track.main(videoPath)
+            cv2.rectangle(self.frame, self.refPt[0], self.refPt[1], self.col, 4)
+            cv2.imshow("win", self.frame)
+        elif event == cv2.EVENT_MOUSEMOVE and flags == cv2.EVENT_FLAG_LBUTTON:
+            clone = self.frame.copy()
+            cv2.rectangle(clone, self.refPt[0], (x, y), self.col, 4)
+            cv2.imshow("win", clone)
+    """
