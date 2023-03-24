@@ -12,8 +12,8 @@ class tracker():
         self.w = None
         self.h = None
         self.k = None
-        self.x = boundaries[0][0][0]+ int((2048-640)/2)
-        self.x2 = boundaries[1][0][0] + int((2048-640)/2)
+        self.x = boundaries[0][0][0]+ int((2048-480)/2)
+        self.x2 = boundaries[1][0][0] + int((2048-480)/2)
         self.y = boundaries[0][0][1]+ int((1536-480)/2)
         self.y2 = boundaries[1][0][1] + int((1536-480)/2)
         self.viz = True
@@ -28,9 +28,7 @@ class tracker():
         imgOut = np.copy(self.frame)
         self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
         self.ProcessCrop()
-        return np.array([self.x,self.x2,self.y, self.y2])
-
-
+        return np.array([self.x,self.x2,self.y, self.y2]), self.frame
 
     def ProcessCrop(self):
 
@@ -62,16 +60,27 @@ class tracker():
             cX = M["m01"] / M["m00"]
 
         # update global coordinates for this track
-        shift_x = cX-old_x
-        shift_y = cY-old_y
+        y_int_error = 0
+        x_int_error = 0
+    
+        shift_x = cX-old_x+x_int_error
+        shift_y = cY-old_y+y_int_error
+
         self.x += shift_x
         self.x2 += shift_x
         self.y += shift_y 
         self.y2 += shift_y
+
         self.validateCoordinates()
+
         self.Dict["y"].append((self.y2+self.y)/2)
         self.Dict["x"].append((self.x2+self.x)/2)
         self.Dict["t"].append(self.t)
+
+        start_pos = (int(np.round(self.y)),int(np.round(self.x)))
+        end_pos = (int(np.round(self.y2)),int(np.round(self.x2)))
+        cv2.rectangle(self.frame, start_pos, end_pos, (255,0,0), 5)
+        
         self.t += 1
 
     def saveData(self,path):

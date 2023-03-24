@@ -30,7 +30,7 @@ class KalmanF():
 class PIDcontroller():
     
     def __init__(self):
-        self.kp = 15
+        self.kp = 10
         self.ki = 0
         self.kd = 0
         self.integral = 0
