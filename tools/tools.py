@@ -4,7 +4,7 @@ import numpy as np
 
 class KalmanF():
 
-    def __init__(self, offset):
+    def __init__(self, feedBackMode, offset):
         self.filter = KalmanFilter(dim_x=2, dim_z = 2)
         
         self.filter.x = np.array([0. , 0.])
@@ -16,37 +16,42 @@ class KalmanF():
         self.filter.P = np.eye(N = self.filter.x.shape[0])
         self.filter.Q = np.eye(N = self.filter.x.shape[0])
         self.filter.R = np.array([[1e-2, 0],[0, 1000]])
-
-        self.PID = PIDcontroller()
+        
+        if feedBackMode:
+            self.PID = PIDMGcontroller()
+        else:
+            self.PID = PIDcontroller()
 
     def filtering(self,z,aim):
         self.filter.predict()
         self.filter.update(z)
         #out = self.PID.PID((self.filter.P[0,1]*z[0] + self.filter.P[1,1]*z[1])/(self.filter.P[0,1] + self.filter.P[1,1]), aim)
         #print("going to PID",z[0], aim)
-        out = self.PID.PID(z[0], aim)
+        out = self.PID.PID(z, aim)
+
         return out
 
 class PIDcontroller():
     
     def __init__(self):
-        self.kp = 10
-        self.ki = 0
-        self.kd = 0
+        self.kp = 8
+        self.ki = 40
+        self.kd = 0.075
         self.integral = 0
         self.past=0
         self.error = None
-
+        self.emaFilter = EMA(0.5)
     
-    def PID(self, value, aim):
+    def PID(self, meas, aim):
+        value = self.emaFilter.filterNow(meas[0])
         self.error = aim-value
 
         prop = self.kp*self.error
-        self.integral += self.ki*self.error
-        derivative = self.kd*(self.past-self.error)
+        self.integral += self.ki*self.error*(1/100)
+        derivative = self.kd*(self.past-self.error)/(1/100)
         self.past = self.error
 
-        return prop+self.integral+derivative+aim
+        return prop+self.integral+derivative
     
 def remap(value, OldMin, OldMax, NewMin, NewMax):
     OldRange = (OldMax - OldMin)  
@@ -55,9 +60,73 @@ def remap(value, OldMin, OldMax, NewMin, NewMax):
     return NewValue
 
 
+class PIDMGcontroller():
+    
+    def __init__(self):
+        print("Created MG controller")
+        self.kp = 35
+        self.ki = 20
+        self.kd = 0.5
+        self.integral = 0
+        self.past=0
+        self.error = None
+        self.emaFilter = EMA(0.5)
+    
+    
+    def PID(self, meas, aim):
+        value = self.emaFilter.filterNow(meas[1])
+        self.error = aim-value
+
+        prop = self.kp*self.error
+        self.integral += self.ki*self.error*(1/100)
+        derivative = self.kd*(self.past-self.error)/(1/100)
+        self.past = self.error
+
+        return prop+self.integral+derivative
+
+        return prop+self.integral+derivative+aim
 
 
 
+class EMA():
+
+    def __init__(self, alpha):
+        self.alpha = alpha
+        self.prev = 0
+
+    def filterNow(self,sample):
+        out = self.alpha*sample + (1-self.alpha)*self.prev
+        self.prev = out
+        return out
+
+
+class alphaBeta():
+
+    def __init__(self,alpha,beta,dt):
+        self.a = alpha
+        self.b = beta
+
+        self.xk_1 = 0
+        self.vk_1 = 0
+
+        self.vk = 0
+
+        self.dt = dt
+
+    def filterNow(self,xm):
+
+        self.xk = self.xk_1 + (self.vk_1*self.dt);
+        self.vk = self.vk_1
+
+        self.rk = xm - self.xk;
+
+        self.xk += self.a*self.rk
+        self.vk += (self.b*self.rk)/self.dt
+
+        self.xk_1 = self.xk
+        self.vk_1 = self.vk
+
+        return self.xk_1
 
 
 

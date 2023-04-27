@@ -10,6 +10,9 @@ import numpy as np
 import cv2
 import time
 import threading
+import os
+from queue import Queue
+
 
 from NiDriver import niDevice
 from baslerControl import baslerCam
@@ -25,6 +28,8 @@ class App(QWidget):
         self.left = 0; self.top = 0
         self.width = 1500; self.height = 1000
 
+        self.samplingHz = args.buffer_size_cfg/(args.samplingFreq)
+
         #Flags
         self.liveFlag = False
         self.drawFlag = False
@@ -32,6 +37,10 @@ class App(QWidget):
         self.feedBackFlag = False
         self.tuneFlag = False
         self.calibFlag = False
+        self.MeasFlag = False
+        self.snapFlag = False
+        
+        self.rectangleQue = Queue(maxsize=0)
 
         #Init driver and signal pipe
         self.driver = niDevice(args)
@@ -89,20 +98,22 @@ class App(QWidget):
         Create label, add accesories and label to layout
         """
         self.label = QLabel(self)
-        self.label.resize(480, 480)
-        self.label.mousePressEvent = self.getPos
-
-        background = np.zeros((480, 480))
+        #self.label.resize(480, 480)
+    
+        background = np.zeros((1536, 2048))
         h, w = background.shape
         bytesPerLine = 1 * w
         convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Grayscale8)
-        self.label.setPixmap(QPixmap(QPixmap.fromImage(convertToQtFormat)))
+        p = convertToQtFormat.scaled(480, 480) #Qt.AspectRatioMode.KeepAspectRatio
+        self.label.setPixmap(QPixmap(QPixmap.fromImage(p)))
+        self.label.mousePressEvent = self.getPos
 
         #Accesories
         self.accessory.addWidget(self.snapbtn)
         self.accessory.addWidget(self.trackerCheck)
         self.accessory.addWidget(self.feedBack)
         self.accessory.addWidget(self.autotune)
+        self.accessory.addWidget(self.MgFeedback)
         self.accessory.addWidget(self.CurrentValueLabel,QtCore.Qt.AlignmentFlag.AlignTop)
         self.accessory.setSpacing(1)
         
@@ -125,6 +136,7 @@ class App(QWidget):
 
         #Init data for the plots
         self.initData()
+ 
 
         #Current Plot
         self.dataLineTarget = self.plotI.plot(x=self.time, y=self.target, pen=pg.mkPen(color="red"), symbol='o', symbolSize=10, row = 0, col = 0, name = "target")
@@ -134,7 +146,7 @@ class App(QWidget):
         self.plotI.setLabel("left", "Current [A]", **self.styles)
         self.plotI.setLabel("bottom", "Time [s]", **self.styles)
         self.plotI.showGrid(x=True, y=True)
-        self.plotI.setXRange(0, 100, padding=0, update = False)
+        self.plotI.setXRange(0, 10, padding=0, update = False)
         self.plotI.setYRange(-0.2, 2, padding=0, update = False)
 
         #Mg field plot
@@ -143,7 +155,7 @@ class App(QWidget):
         self.plotB.setLabel("left", "B [T]", **self.styles)
         self.plotB.setLabel("bottom", "Time [s]", **self.styles)
         self.plotB.showGrid(x=True, y=True)
-        self.plotB.setXRange(0, 100, padding=0, update = False)
+        self.plotB.setXRange(0, 10, padding=0, update = False)
         self.plotB.setYRange(-0.2, 1.5, padding=0, update = False)
 
         #Tracking plot
@@ -169,13 +181,18 @@ class App(QWidget):
         self.textField.setFixedSize(self.width,50)
         self.vlayout.addWidget(self.textField)
 
+    def createAndCheckFolder(self,path):
+        isExist = os.path.exists(path)
+        if not isExist:
+            # Create a new directory because it does not exist
+            os.makedirs(path)
 
     def initData(self):
         #Init Data
-        self.time = np.zeros(50)
-        self.target = np.zeros(50)
-        self.measured = np.zeros(50)
-        self.measuredB = np.zeros(50)
+        self.time = np.zeros(500)
+        self.target = np.zeros(500)
+        self.measured = np.zeros(500)
+        self.measuredB = np.zeros(500)
         self.trackX = np.zeros(50)
         self.trackY = np.zeros(50)
 
@@ -198,6 +215,9 @@ class App(QWidget):
 
         self.autotune = QCheckBox("Autotune")
         self.autotune.stateChanged.connect(self.checkAutoTune)
+
+        self.MgFeedback = QCheckBox("B - Feedback")
+        self.MgFeedback.stateChanged.connect(self.changeFeedBack)
         
         #Stream camera
         self.streamBtn = QPushButton("Video Stream")
@@ -227,16 +247,18 @@ class App(QWidget):
         #tracker on/off
         self.trackerCheck = QCheckBox("Track")
         self.trackerCheck.stateChanged.connect(self.checkTrack)
+        self.trackerCheck.setCheckState(Qt.CheckState.Checked)
 
         #Feedback on/off
         self.feedBack = QCheckBox("FeedBack")
         self.feedBack.stateChanged.connect(self.checkFeed)
+        self.feedBack.setCheckState(Qt.CheckState.Checked)
 
         #Resistance slider 
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
         self.sliderR1.setRange(0,100)
-        self.sliderR1.setValue(46)
+        self.sliderR1.setValue(27)
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
         self.sliderR1.setTickPosition(QSlider.TickPosition.TicksRight)
@@ -299,15 +321,23 @@ class App(QWidget):
         else:
             self.calibFlag = False
 
+    def changeFeedBack(self,state):
+        if state == 2:
+            self.driver.BFeedback = True
+        else:
+            self.driver.BFeedback = False
+
     def livestream(self):
         #Start camera stream
-        self.streamBtn.setStyleSheet("background-color : white")
         self.liveFlag = True
+        self.streamBtn.setStyleSheet("background-color : white")
+        
         self.x = threading.Thread(target=self.cam.livestream)
         self.x.start()
 
     def snapImage(self):
         #snap image
+        self.snapFlag = True
         self.snapbtn.setStyleSheet("background-color : white")
         self.snapThread = threading.Thread(target=self.cam.snapImage)
         self.snapThread.start()
@@ -338,30 +368,42 @@ class App(QWidget):
             self.x2 = self.boundaryFinal[1][0][0] 
             self.y1 = self.boundaryFinal[0][0][1]
             self.y2 = self.boundaryFinal[1][0][1]
-            self.drawRectangle()
+            self.drawRectangle(self.label.pixmap())
             self.cam.finalboundaries = self.boundaryFinal
             self.cam.initTracker()
             self.snapbtn.setStyleSheet("background-color : green")
+            self.snapFlag = False
 
-    def drawRectangle(self):
+    def drawRectangle(self,canvas):
         """
         Draw rectangle to the current label
         This goes wrong place!
         """
-        canvas = self.label.pixmap()
         painter = QtGui.QPainter(canvas)
         painter.setPen(self.pen)
+        
+        if self.rectangleQue.empty() == False:
+            
+            datas = self.rectangleQue.get()
+            self.x1 = datas[0]
+            self.x2 = datas[1]
+            self.y1 = datas[2]
+            self.y2 = datas[3]
+
+        
         width = self.x2 - self.x1
         height = self.y2 - self.y1
         painter.drawRect(int(self.x1),int(self.y1), int(width), int(height))
+        #painter.drawRect(0,350, int(width), int(height))
         painter.end()
         self.label.setPixmap(canvas)
+        self.rectangleQue = Queue(maxsize=0)
 
     def calibrate(self):
         """
         Start manual and automatic cfg
         """
-
+        self.createAndCheckFolder(self.textField.toPlainText())
         self.driver.root = self.textField.toPlainText()
 
         self.CalibBtn.setStyleSheet("background-color : white")
@@ -375,7 +417,7 @@ class App(QWidget):
             self.xTune.start()
             self.tuneFlag = True
         
-        self.CalibBtn.setStyleSheet("background-color : green")
+        #self.CalibBtn.setStyleSheet("background-color : green")
 
 
     def start(self):
@@ -384,9 +426,10 @@ class App(QWidget):
             -Fetch path
             -start current driver and camera
         """
-
+        self.MeasFlag = True
         self.snapbtn.setStyleSheet("background-color : blue")
 
+        self.createAndCheckFolder(self.textField.toPlainText())
         self.cam.path = self.textField.toPlainText()
         self.driver.root = self.textField.toPlainText()
 
@@ -397,6 +440,7 @@ class App(QWidget):
 
         self.x = threading.Thread(target=self.cam.recordMeasurement)
         self.x.start()
+        
         self.btnStart.setStyleSheet("background-color : white")
         
     def cleanplots(self):
@@ -404,8 +448,12 @@ class App(QWidget):
         self.dataLineMeasured.setData(self.time, self.measured)
         self.dataLineMeasuredB.setData(self.time, self.measuredB)
         self.TrackLine.setData(self.time, self.measuredB)   
-        self.plotI.setXRange(0, 100, padding=0)
-        self.plotB.setXRange(0, 100, padding=0)
+        self.plotB.setXRange(0, 10, padding=0, update = False)
+        self.plotB.setYRange(-0.2, 1.5, padding=0, update = False)
+        self.plotI.setXRange(0, 10, padding=0, update = False)
+        self.plotI.setYRange(-0.2, 2, padding=0, update = False)
+        self.plotTrack.setXRange(0, 2048, padding=0, update = False)
+        self.plotTrack.setYRange(0, 1536, padding=0, update = False)  
 
     def stop(self):
         """
@@ -418,30 +466,23 @@ class App(QWidget):
 
             #Stop driver
             self.driver.kill()
-            print("Waiting driver to close")
             self.xTune.join()
-            print("Closed current driver succesfully!")
-
-            #clean
-            self.initData()
-            self.cleanplots()
 
             #reset
             self.tuneFlag = False
-            self.CurrentValueLabel = QLabel("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0.00,0.00,0.00))
+            self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
             self.btnStop.setStyleSheet("background-color : red")
         elif self.liveFlag:
             #Close streaming camera
-            print("Waiting camera to close")
             self.cam.kill()
             self.x.join()
-            print("Closed camera succesfully!")
-
+            time.sleep(1)
             #reset
-            self.liveFlag = False
-            self.streamBtn.setStyleSheet("background-color : green")       
-        else:
 
+            self.streamBtn.setStyleSheet("background-color : green")   
+            self.liveFlag = False
+
+        elif self.MeasFlag:
             self.btnStart.setStyleSheet("background-color : green")
             self.btnStop.setStyleSheet("background-color : white")
 
@@ -449,19 +490,27 @@ class App(QWidget):
             self.cam.kill()
             self.driver.kill()
 
-            print("waiting camera and driver to join")
             self.x.join()
-            print("Closed camera succesfully!")
             self.y.join()
-            print("Closed current driver succesfully!")
 
-            #clean
-            self.initData()
-            self.cleanplots()
 
-            #reset
-            self.CurrentValueLabel = QLabel("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0.00,0.00,0.00))
-            self.btnStop.setStyleSheet("background-color : red")
+            self.MeasFlag = False
+        else:
+            print("Nothing is running!")
+            pass
+
+
+        time.sleep(5)
+
+        #clean
+        self.initData()
+        self.cleanplots()
+        self.boundaryFinal = [] 
+        #reset
+        self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
+        self.btnStop.setStyleSheet("background-color : red")
+
+        print("Ready roll again!")
     
     def shutDown(self):
         """
@@ -478,17 +527,22 @@ class App(QWidget):
         Image signal pipe
         """
         self.receivedFrame = image
-        self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
+
+        if (self.liveFlag == False) & (self.trackFlag == True) & (self.snapFlag == False):
+
+            self.drawRectangle(QPixmap(QPixmap.fromImage(self.receivedFrame)))
+        else:
+            self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
 
     @pyqtSlot(object)
     def receiveData(self,data):
         """
         DaQ signal pipe
         """
-        self.time = np.roll(self.time,-1); self.time[-1] = data[0]
+        self.time = np.roll(self.time,-1); self.time[-1] = data[0]*self.samplingHz
         self.target = np.roll(self.target,-1); self.target[-1] = data[1]
         self.measured = np.roll(self.measured,-1); self.measured[-1] = data[2]
-        self.measuredB = np.roll(self.measuredB,-1); self.measuredB[-1] = -data[3]
+        self.measuredB = np.roll(self.measuredB,-1); self.measuredB[-1] = data[3]
 
         #Update plots
         self.dataLineTarget.setData(self.time, self.target)
@@ -496,26 +550,28 @@ class App(QWidget):
         self.dataLineMeasuredB.setData(self.time, self.measuredB)
 
         #Update fields
-        self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(data[1],data[2],-data[3]))
+        self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(np.abs(data[1]),np.abs(data[2]),np.abs(data[3])))
 
         #Update axis
-        if data[0]>100:
-            self.plotI.setXRange(data[0]-100, data[0]+100, padding=0)
-            self.plotB.setXRange(data[0]-100, data[0]+100, padding=0)
+        if data[0]*self.samplingHz>10:
+            self.plotI.setXRange(data[0]*self.samplingHz-10, data[0]*self.samplingHz+10, padding=0)
+            self.plotB.setXRange(data[0]*self.samplingHz-10, data[0]*self.samplingHz+10, padding=0)
 
     @pyqtSlot(object)
     def receiveTrackData(self,data):
         """
-        Tracker signal pipe
+        Tracker signal pipe 2048, 1536
         """
-        self.x2 = data[1] - int((2048-480)/2)
-        self.x1 = data[0] - int((2048-480)/2)
-        self.y2 = data[3] - int((1536-480)/2)
-        self.y1 = data[2] - int((1536-480)/2)
-        self.trackX = np.roll(self.trackX,-1); self.trackX[-1] = int((self.x2+self.x1)/2)
-        self.trackY = np.roll(self.trackY,-1); self.trackY[-1] = int((self.y2+self.y1)/2)
+        
+        x2 = data[1] 
+        x1 = data[0]
+        y2 = 1536 - data[3]
+        y1 = 1536 - data[2]
+        self.trackX = np.roll(self.trackX,-1); self.trackX[-1] = int((x2+x1)/2)
+        self.trackY = np.roll(self.trackY,-1); self.trackY[-1] = int((y2+y1)/2)
 
         self.TrackLine.setData(self.trackX, self.trackY)
+        self.rectangleQue.put(np.array([int(data[0]*480/2048), int(data[1]*480/2048), int(data[2]*480/1536), int(data[3]*480/1536)]))
 
 
 def pymain(args):

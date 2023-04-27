@@ -12,10 +12,25 @@ class tracker():
         self.w = None
         self.h = None
         self.k = None
-        self.x = boundaries[0][0][0]+ int((2048-480)/2)
-        self.x2 = boundaries[1][0][0] + int((2048-480)/2)
-        self.y = boundaries[0][0][1]+ int((1536-480)/2)
-        self.y2 = boundaries[1][0][1] + int((1536-480)/2)
+
+
+        self.x = int(np.floor(boundaries[0][0][0]*2048/480))
+        self.x2 = int(np.floor(boundaries[1][0][0]*2048/480))
+        self.y = int(np.floor(boundaries[0][0][1]*1536/480))
+        self.y2 = int(np.floor(boundaries[1][0][1]*1536/480))
+
+        self.xOrg = boundaries[0][0][0]*2048/480
+        self.yOrg = boundaries[0][0][1]*1536/480
+
+        self.binary = None
+ 
+        """
+        self.x = int(boundaries[0][0][0])
+        self.x2 = int(boundaries[0][1][0])
+        self.y = int(boundaries[0][0][1])
+        self.y2 = int(boundaries[0][1][1])
+        """
+
         self.viz = True
         self.cap = None
         self.col = (0, 255, 0)
@@ -23,26 +38,32 @@ class tracker():
         self.t = 0
 
     def main(self, img):
-        self.frame = img
+        self.frame = np.copy(img)
         self.w,self.h = self.frame.shape
-        imgOut = np.copy(self.frame)
         self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
         self.ProcessCrop()
-        return np.array([self.x,self.x2,self.y, self.y2]), self.frame
+
+        return np.array([self.x,self.x2, self.y, self.y2]), img
 
     def ProcessCrop(self):
 
-        #self.frameCrop = cv2.cvtColor(self.frameCrop, cv2.COLOR_BGR2GRAY)
         ret3,binary = cv2.threshold(self.frameCrop,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        
+        
         if binary is None:
             binary = np.zeros_like(self.frameCrop)
         else:
             binary = 255-binary
         
+        self.binary = np.copy(binary)
+
         contours,_ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         radius = -1
+        
         if contours:
             biggest = max(contours, key = cv2.contourArea)
+            (x_,y_),radius = cv2.minEnclosingCircle(biggest)
+            center = (int(x_),int(y_))
         else:
             biggest = np.zeros_like(binary)
 
@@ -60,8 +81,8 @@ class tracker():
             cX = M["m01"] / M["m00"]
 
         # update global coordinates for this track
-        y_int_error = 0
-        x_int_error = 0
+        y_int_error = self.y - self.yOrg
+        x_int_error = self.x - self.xOrg
     
         shift_x = cX-old_x+x_int_error
         shift_y = cY-old_y+y_int_error
@@ -77,9 +98,13 @@ class tracker():
         self.Dict["x"].append((self.x2+self.x)/2)
         self.Dict["t"].append(self.t)
 
-        start_pos = (int(np.round(self.y)),int(np.round(self.x)))
-        end_pos = (int(np.round(self.y2)),int(np.round(self.x2)))
-        cv2.rectangle(self.frame, start_pos, end_pos, (255,0,0), 5)
+        self.x = int(np.floor(self.x))
+        self.x2 = int(np.floor(self.x2))
+        self.y = int(np.floor(self.y))
+        self.y2 = int(np.floor(self.y2))
+
+        self.xOrg = self.x
+        self.yOrg = self.y    
         
         self.t += 1
 

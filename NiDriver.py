@@ -3,7 +3,7 @@ import nidaqmx
 from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
 from PyQt6.QtCore import pyqtSignal,QThread
 
-from datetime import datetime
+
 import time
 import numpy as np
 import os
@@ -23,10 +23,11 @@ class niDevice(QThread):
         self.writerFlag = False
         self.readerFlag = False
         self.feedBackFlag = False
+        self.BFeedback = False
 
         self.killCommand = Queue(maxsize=1) #Change if too much
-        self.writeQue = Queue(maxsize=10)
-        self.resOneQue = Queue(maxsize=10)
+        self.writeQue = Queue(maxsize=100)
+        self.resOneQue = Queue(maxsize=100)
 
         #parse arguments
         self.totalTime = args.time
@@ -38,6 +39,7 @@ class niDevice(QThread):
 
         #Reserve memory
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+        self.FreqRet = int(self.samplingFreq/args.buffer_size_cfg)
         self.que = Queue(maxsize=self.NSamples) #Change if too much
         self.NpyStorage = np.zeros((4,self.NSamples))
         self.bufferIn = np.zeros((self.chans_in, self.buffer_size))
@@ -46,10 +48,12 @@ class niDevice(QThread):
         self.startTime = None
         self.readerStreamIn = None
         self.currentToWrite = 0
-        self.MgOffset = 0
-        self.plotCoef = 6.94266382e-01
+        self.MgOffset = None
 
-        self.kalman = KalmanF(offset=0.012)
+        
+        self.Mgcoef = 0.73742302 #valid only 1A
+        
+        self.sequence = None
 
         self.iteration = 0
 
@@ -61,17 +65,35 @@ class niDevice(QThread):
         Generate step sequence
         """
         self.sequence = np.zeros(self.NSamples)
-        self.measured = np.zeros(self.NSamples)
-        self.target = np.zeros(self.NSamples)
-        self.time = np.zeros(self.NSamples)
-        self.sequence[50:450] = 0.5
+
+        start = int(self.FreqRet*5)
+        end = int(self.totalTime*0.75*self.FreqRet)
+        self.sequence[start:end] = 0.5
 
     def generateSlope(self):
         """
         Generate linear slope for calibration
         """
         self.sequence = np.zeros(self.NSamples)
-        self.sequence[:] = np.arange(0,self.NSamples)*0.001*2
+
+        offset = 0.1
+        self.sequence[:5000] = offset
+        self.sequence[5000:] = offset + np.arange(self.NSamples-5000)*0.00002
+        #self.sequence[-1] = 0
+
+    def SinWave(self):
+        """
+        Generate linear slope for calibration
+        """
+        self.sequence = np.zeros(self.NSamples)
+
+        offset = 0.25
+        grad = 0.5
+        freq = 0.05
+
+        self.sequence[:10000] = offset
+        self.sequence[10000:40000] = offset + grad*np.sin(2*np.pi*freq*np.arange(30000)*(1/1000))
+        #self.sequence[-1] = 0
 
     def askUser(self):
         """
@@ -80,13 +102,22 @@ class niDevice(QThread):
         self.NiDWriter.start()
         self.NiDWriter.write(True, 1000)
 
-        while self.killCommand.empty() == True:
-            time.sleep(1)
-        print("closing driver tasks!")
-        time.sleep(2)
-        result = self.killCommand.get()
+        while True:
+            if self.killCommand.empty() == True:
+                time.sleep(1)
+            else:
+                command = self.killCommand.get()
+                if command == 1:
+                    print("Kill command received")
+                    break
+                else: 
+                    time.sleep(1)
+                    print("Measurement done, press stop quit")
+                    
+        print("continue to shutdown")
 
-        print("closing, current driver")
+        time.sleep(2)
+        #result = self.killCommand.get()
         
         self.NiDWriter.write(False, 1000)
 
@@ -95,6 +126,12 @@ class niDevice(QThread):
             print("Waiting tasks to close")
             time.sleep(1)
         
+        time.sleep(1)
+        
+        self.killCommand = Queue(maxsize=1) #Change if too much
+        self.iteration = 0
+        self.writerFlag=False
+        self.readerFlag=False
         #Close all current tasks
         self.closeAll()
 
@@ -107,7 +144,6 @@ class niDevice(QThread):
             self.NiAlWriter.write(0,1000)
 
         #stop tasks
-        self.NiAlReader.stop()
         self.NiAlWriter.stop()
         self.NiDWriter.stop()
 
@@ -119,6 +155,8 @@ class niDevice(QThread):
         #reset flags
         self.writerFlag = False
         self.readerFlag = False
+
+        print("Driver closed!")
         
 
     def cfg_AO_writer_task(self):
@@ -154,8 +192,9 @@ class niDevice(QThread):
             self.que.put(self.values[:,-1])
             self.iteration += 1
         else:
-            print("shutting down")
+            self.killCommand.put(2)
             self.readerFlag = True
+            self.NiAlReader.stop()
     
         return 0
     
@@ -164,7 +203,7 @@ class niDevice(QThread):
         Find Mg sensor baseline
         """
         Nsamples = 500
-
+        
         #Create and close task
         calibR = nidaqmx.Task()
         calibR.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE, min_val = 0, max_val=5)  # has to match with chans_in
@@ -214,13 +253,14 @@ class niDevice(QThread):
         Fetch from que and send to filter+PID
         """
         measured = self.que.get()
-        measured[0] = measured[0]/self.resistance1
+        measured[0] = 2*measured[0]
         measured[1] = measured[1]-self.MgOffset
         if self.feedBackFlag:
-            kalmanOut =  self.kalman.filtering(measured, writeC)
-            data = kalmanOut*self.resistance1
+            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]*self.Mgcoef*self.resistance1]), writeC*self.resistance1)
+            #print("in", measured[0], "\nOut", kalmanOut)
+            data = kalmanOut#*self.resistance1
         else:
-            data = self.resistance1*writeC
+            data = writeC*self.resistance1
         
         return measured,data
 
@@ -228,29 +268,32 @@ class niDevice(QThread):
         """
         Pipe measurement
         """
-
         self.NiAlWriter.start()
         for i in range(10):
             self.NiAlWriter.write(0,1000)
         
         QueIndex = 0
+        
         while True:
             if (self.que.empty() == False) & (QueIndex < self.NSamples):
                 #fetch from que
                 measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
+                #data =  self.sequence[QueIndex]
                 data = self.checkLimits(data)
                 
                 #write
+                
                 self.NiAlWriter.write(data,1000)
 
                 #Emit Qt
-                self.s  = np.array([QueIndex, self.sequence[QueIndex], self.plotCoef*self.sequence[QueIndex] + measured[0], measured[1]])
-                self.setData.emit(self.s)
+                if QueIndex%100 == 0:
+                    self.s  = np.array([QueIndex, self.sequence[QueIndex],  measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
+                    self.setData.emit(self.s)
 
                 #Collect
-                self.NpyStorage[0,QueIndex] = QueIndex
+                self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
                 self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
-                self.NpyStorage[2,QueIndex] = measured[0]
+                self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
                 self.NpyStorage[3,QueIndex] = measured[1]
 
                 QueIndex += 1
@@ -261,11 +304,93 @@ class niDevice(QThread):
                     time.sleep(0.001)
                 else:
                     #Empty que and measurement done
+                    for i in range(10):
+                        self.NiAlWriter.write(0,1000)
                     self.writerFlag = True
-                    print("Closing driver")
                     break
         #Save log
         np.save(os.path.join(self.root,"driver.npy"), self.NpyStorage)
+
+
+    def processTune(self):
+        """
+        Tuning measurement
+        """
+        self.NiAlWriter.start()
+        for i in range(5):
+            self.NiAlWriter.write(0,1000)
+
+        QueIndex = 0
+        while True:
+            if (self.que.empty() == False) & (QueIndex < self.NSamples):
+                #fetch data
+                self.currentToWrite = self.searchwriter()
+                measured,data = self.fetchQue(QueIndex, self.currentToWrite)
+                data = self.checkLimits(data)
+                #write
+                self.NiAlWriter.write(data,1000)
+
+                #Emit to Qt
+                if QueIndex%100 == 0:
+                    self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
+                    self.setData.emit(self.s)
+
+                QueIndex += 1
+            else:
+                if (self.killCommand.empty() == True) & (QueIndex < self.NSamples):
+                    time.sleep(0.001)
+                else:
+                    for i in range(10):
+                        self.NiAlWriter.write(0,1000)
+
+                    self.writerFlag = True
+                    break
+            
+
+    def processAutoTune(self):
+        """
+        Pipe autocalibration
+        """
+        self.NiAlWriter.start()
+        for i in range(5):
+            self.NiAlWriter.write(0,1000)
+        
+        QueIndex = 0
+        while True:
+            if (self.que.empty() == False) & (QueIndex < self.NSamples):
+
+                #fetch
+                measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
+                #data = self.sequence[QueIndex]
+                
+                data = self.checkLimits(data)
+
+                #write
+                self.NiAlWriter.write(data,1000)
+
+                #emit
+                if QueIndex%100 == 0:
+                    self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
+                    self.setData.emit(self.s)
+
+                self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
+                self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
+                self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
+                self.NpyStorage[3,QueIndex] = measured[1]
+
+                QueIndex += 1
+            else:
+                if (self.killCommand.empty() == True) & (QueIndex < self.NSamples):
+                    pass
+                    time.sleep(0.001)
+                else:
+                    for i in range(10):
+                        self.NiAlWriter.write(0,1000)
+                    self.writerFlag = True
+                    break
+   
+        np.save(os.path.join(self.root,"calib.npy"), self.NpyStorage)
+        self.fitCalibration()
 
     def searchwriter(self):
         if self.writeQue.empty():
@@ -279,74 +404,25 @@ class niDevice(QThread):
         else:
             return self.resOneQue.get()
 
-    def processTune(self):
-        """
-        Tuning measurement
-        """
-        self.NiAlWriter.start()
-        for i in range(5):
-            self.NiAlWriter.write(0,1000)
-
-        QueIndex = 0
-        while True:
-            if self.que.empty() == False:
-                #fetch data
-                self.currentToWrite = self.searchWriter()
-                measured,data = self.fetchQue(QueIndex, self.currentToWrite)
-                data = self.checkLimits(data)
-                #write
-                self.NiAlWriter.write(data,1000)
-
-                #Emit to Qt
-                self.s  = np.array([self.iteration, self.currentToWrite, self.plotCoef*self.sequence[QueIndex] + measured[0], measured[1]])
-                self.setData.emit(self.s)
-
-                QueIndex += 1
-            else:
-                if self.killCommand.empty() == True:
-                    time.sleep(0.001)
-                else:
-                    self.writerFlag = True
-                    break
-            
-
-    def processAutoTune(self):
-        """
-        Pipe autocalibration
+        """       
+        self.sequence = np.zeros(self.NSamples)
+        offset = 0.1
+        self.sequence[:5000] = offset
+        self.sequence[5000:] = offset + np.arange(self.NSamples-5000)*0.00002
         """
 
-        self.NiAlWriter.start()
-        for i in range(5):
-            self.NiAlWriter.write(0,1000)
+    def fitCalibration(self):
+        maxIndex = np.where(self.NpyStorage[2,:] >=0.5)[0][0]
+        x = self.NpyStorage[2,5000:maxIndex]
+        x = x-x[0]
+        x = x[:,np.newaxis]
+        y = self.NpyStorage[3,5000:maxIndex]
+        y = y-y[0]
+        k, _, _, _  = np.linalg.lstsq(x,y)
         
-        QueIndex = 0
-        while True:
-            if self.que.empty() == False:
-
-                #fetch
-                measured,data = self.fetchQue(QueIndex, self.currentToWrite)
-                data = self.checkLimits(data)
-
-                #write
-                self.NiAlWriter.write(data,1000)
-
-                #emit
-                self.s  = np.array([QueIndex, self.currentToWrite, self.plotCoef*self.sequence[QueIndex] + measured[0], measured[1]])
-                self.setData.emit(self.s)
-
-                #save
-                self.measured[QueIndex] = self.measured[0]
-                self.target[QueIndex] = self.target[QueIndex]
-                self.time[QueIndex] = QueIndex
-                QueIndex += 1
-            else:
-                if self.killCommand.empty() == True:
-                    pass
-                    time.sleep(0.001)
-                else:
-                    self.writerFlag = True
-                    break
-        """ ToDo derive coef to match plot and source"""
+        print("New conversion factor: ", 1/np.abs(k))
+        
+        self.Mgcoef = 1/float(k[0])
 
     def initTasks(self):
         """
@@ -364,15 +440,17 @@ class niDevice(QThread):
         """
         Manual tune source and ref. resistance
         """
+        self.kalman = KalmanF(self.BFeedback,offset=0.012)
+        self.NSamples = np.inf #Continue until stopped
         self.initTasks()
 
         threadUser = threading.Thread(target = self.askUser)
         threadProcess = threading.Thread(target = self.processTune)
         
-        self.start = datetime.now()
         threadUser.start() #turn on voltage source and wait kill command
         
-        self.calibrateMgSensor() #calibrate the Mg sensor
+        if self.MgOffset == None:
+            self.calibrateMgSensor() #calibrate the Mg sensor
         
         threadProcess.start() #start writer
         self.NiAlReader.start() #start reading 
@@ -383,16 +461,20 @@ class niDevice(QThread):
         """
         Manual tune source and ref. resistance with linear sequence
         """
+        self.kalman = KalmanF(self.BFeedback,offset=0.012)
+        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+        
         self.generateSlope()
+        #self.SinWave()
         self.initTasks()
 
         threadUser = threading.Thread(target = self.askUser)
         threadProcess = threading.Thread(target = self.processAutoTune)
         
-        self.start = datetime.now()
         threadUser.start() #turn on voltage source and wait kill command
 
-        self.calibrateMgSensor() #calibrate the Mg sensor  
+        if self.MgOffset == None:
+            self.calibrateMgSensor() #calibrate the Mg sensor  
         
         threadProcess.start() #start writer
         self.NiAlReader.start() #start reading 
@@ -404,17 +486,20 @@ class niDevice(QThread):
         """
         Measurement
         """
+        self.kalman = KalmanF(self.BFeedback,offset=0.012)
+        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
 
         self.generateStepWave()
+        #self.generateSlope()
+        
         self.initTasks()
 
         threadUser = threading.Thread(target = self.askUser)
         threadProcess = threading.Thread(target = self.process)
 
-        self.start = datetime.now()
         threadUser.start() #turn on voltage source and wait kill command
-
-        self.calibrateMgSensor() #calibrate the Mg sensor  
+        if self.MgOffset == None:
+            self.calibrateMgSensor() #calibrate the Mg sensor  
         
         threadProcess.start() #start writer
         self.NiAlReader.start() #start reading 
