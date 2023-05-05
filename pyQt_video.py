@@ -16,6 +16,7 @@ from queue import Queue
 
 from NiDriver import niDevice
 from baslerControl import baslerCam
+from Modeling import positionScaling
 
 class App(QWidget):
 
@@ -39,7 +40,8 @@ class App(QWidget):
         self.calibFlag = False
         self.MeasFlag = False
         self.snapFlag = False
-        
+        self.modelFlag = False
+
         self.rectangleQue = Queue(maxsize=0)
 
         #Init driver and signal pipe
@@ -50,6 +52,8 @@ class App(QWidget):
         self.cam = baslerCam(self.args)
         self.cam.changePixmap.connect(self.setImage)
         self.cam.position.connect(self.receiveTrackData)
+
+        self.model = None
 
         #Variables for drawing
         self.clicks = 0
@@ -114,6 +118,7 @@ class App(QWidget):
         self.accessory.addWidget(self.feedBack)
         self.accessory.addWidget(self.autotune)
         self.accessory.addWidget(self.MgFeedback)
+        self.accessory.addWidget(self.PositionFeedback)
         self.accessory.addWidget(self.CurrentValueLabel,QtCore.Qt.AlignmentFlag.AlignTop)
         self.accessory.setSpacing(1)
         
@@ -218,6 +223,9 @@ class App(QWidget):
 
         self.MgFeedback = QCheckBox("B - Feedback")
         self.MgFeedback.stateChanged.connect(self.changeFeedBack)
+
+        self.PositionFeedback = QCheckBox("Position - Feedback")
+        self.PositionFeedback.stateChanged.connect(self.changePosition)
         
         #Stream camera
         self.streamBtn = QPushButton("Video Stream")
@@ -327,6 +335,19 @@ class App(QWidget):
         else:
             self.driver.BFeedback = False
 
+    def changePosition(self,state):
+        if state == 2:
+            self.modelFlag = True
+            self.model = positionScaling()
+            self.cam.changeModelFlag()
+            self.model.addCamera(self.cam)
+            self.driver.addModel(self.model)
+        else:
+            self.cam.changeModelFlag()
+            self.modelFlag = False
+            self.model = None
+            self.driver.addModel(None)
+
     def livestream(self):
         #Start camera stream
         self.liveFlag = True
@@ -371,6 +392,8 @@ class App(QWidget):
             self.drawRectangle(self.label.pixmap())
             self.cam.finalboundaries = self.boundaryFinal
             self.cam.initTracker()
+            if self.modelFlag:
+                self.model.initMag((self.x2-self.x1)/2,((self.y2-self.y1)/2))
             self.snapbtn.setStyleSheet("background-color : green")
             self.snapFlag = False
 
@@ -397,7 +420,8 @@ class App(QWidget):
         #painter.drawRect(0,350, int(width), int(height))
         painter.end()
         self.label.setPixmap(canvas)
-        self.rectangleQue = Queue(maxsize=0)
+        with self.rectangleQue.mutex:
+            self.rectangleQue.queue.clear()
 
     def calibrate(self):
         """
@@ -493,8 +517,11 @@ class App(QWidget):
             self.x.join()
             self.y.join()
 
+            if self.modelFlag:
+                self.model.initMag(0,0)
 
             self.MeasFlag = False
+
         else:
             print("Nothing is running!")
             pass
@@ -567,8 +594,10 @@ class App(QWidget):
         x1 = data[0]
         y2 = 1536 - data[3]
         y1 = 1536 - data[2]
-        self.trackX = np.roll(self.trackX,-1); self.trackX[-1] = int((x2+x1)/2)
-        self.trackY = np.roll(self.trackY,-1); self.trackY[-1] = int((y2+y1)/2)
+        self.trackX = np.roll(self.trackX,-1)
+        self.trackY = np.roll(self.trackY,-1)
+        self.trackX[-1] = (x2+x1)/2
+        self.trackY[-1] = (y2+y1)/2
 
         self.TrackLine.setData(self.trackX, self.trackY)
         self.rectangleQue.put(np.array([int(data[0]*480/2048), int(data[1]*480/2048), int(data[2]*480/1536), int(data[3]*480/1536)]))

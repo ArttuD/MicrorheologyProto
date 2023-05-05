@@ -1,7 +1,7 @@
 
 import nidaqmx
 from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
-from PyQt6.QtCore import pyqtSignal,QThread
+from PyQt6.QtCore import pyqtSignal,QThread, pyqtSlot
 
 
 import time
@@ -24,10 +24,12 @@ class niDevice(QThread):
         self.readerFlag = False
         self.feedBackFlag = False
         self.BFeedback = False
+        self.modelFlag = False
 
         self.killCommand = Queue(maxsize=1) #Change if too much
         self.writeQue = Queue(maxsize=100)
         self.resOneQue = Queue(maxsize=100)
+        self.modelScaler = Queue(maxsize=0)
 
         #parse arguments
         self.totalTime = args.time
@@ -52,13 +54,23 @@ class niDevice(QThread):
 
         
         self.Mgcoef = 0.73742302 #valid only 1A
-        
+        self.scaler = 0.0
         self.sequence = None
-
         self.iteration = 0
-
         self.fileOut = "NiLog.csv"
 
+        self.model = None
+
+    def addModel(self,model):
+        self.modelFlag = True
+        self.model = model
+        self.model.magData.connect(self.receiveScaler)
+
+    @pyqtSlot(float)
+    def receiveScaler(self, data):
+        with self.modelScaler.mutex:
+            self.modelScaler.queue.clear()
+        self.modelScaler.put(self.Mgcoef*data)
 
     def generateStepWave(self):
         """
@@ -157,8 +169,11 @@ class niDevice(QThread):
         self.readerFlag = False
 
         print("Driver closed!")
-        
-
+    
+    def updateScaler(self):
+        if self.modelScaler.empty() == False:
+            self.scaler = self.modelScaler.get()
+    
     def cfg_AO_writer_task(self):
         #Config analog output channel between -10 and 10V
         self.NiAlWriter.ao_channels.add_ao_voltage_chan("Dev1/ao0","", min_val=- 10.0, max_val=10.0)
@@ -279,16 +294,17 @@ class niDevice(QThread):
                 #fetch from que
                 measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
                 #data =  self.sequence[QueIndex]
-                data = self.checkLimits(data)
+                data = self.checkLimits(data)-self.scaler
                 
-                #write
-                
-                self.NiAlWriter.write(data,1000)
 
                 #Emit Qt
                 if QueIndex%100 == 0:
                     self.s  = np.array([QueIndex, self.sequence[QueIndex],  measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
                     self.setData.emit(self.s)
+                    self.updateScaler()
+            
+                #write
+                self.NiAlWriter.write(data,1000)
 
                 #Collect
                 self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
@@ -329,7 +345,7 @@ class niDevice(QThread):
                 data = self.checkLimits(data)
                 #write
                 self.NiAlWriter.write(data,1000)
-
+                
                 #Emit to Qt
                 if QueIndex%100 == 0:
                     self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])

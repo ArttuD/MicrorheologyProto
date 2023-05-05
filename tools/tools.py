@@ -1,6 +1,7 @@
 
 from filterpy.kalman import KalmanFilter
 import numpy as np
+import pandas as pd
 
 class KalmanF():
 
@@ -118,7 +119,7 @@ class alphaBeta():
         self.xk = self.xk_1 + (self.vk_1*self.dt);
         self.vk = self.vk_1
 
-        self.rk = xm - self.xk;
+        self.rk = xm - self.xk
 
         self.xk += self.a*self.rk
         self.vk += (self.b*self.rk)/self.dt
@@ -127,6 +128,4 @@ class alphaBeta():
         self.vk_1 = self.vk
 
         return self.xk_1
-
-
 

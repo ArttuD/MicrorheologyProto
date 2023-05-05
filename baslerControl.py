@@ -17,6 +17,7 @@ from queue import Queue
 class baslerCam(QThread):
     changePixmap = pyqtSignal(QImage)
     position = pyqtSignal(object)
+    coordsScaler = pyqtSignal(object)
 
     def __init__(self, args):
         super().__init__()
@@ -26,6 +27,7 @@ class baslerCam(QThread):
         #flags
         self.killCommand = Queue(maxsize=1)
         self.trackFlag = False
+        self.modelFlag = False
 
         #variables
         self.frame = None
@@ -53,6 +55,12 @@ class baslerCam(QThread):
         Kill threads
         """
         self.killCommand.put(1)
+
+    def changeModelFlag(self):
+        if self.modelFlag:
+            self.modelFlag = False
+        else:
+            self.modelFlag = True
 
     def cfgCamera(self):
         """
@@ -173,6 +181,7 @@ class baslerCam(QThread):
                     
                     #Emit coordinates
                     self.emitPosition(coords)
+                    
                     pass
                 #Viz every 5th
                 if i%5 == 0:
@@ -195,6 +204,8 @@ class baslerCam(QThread):
         Emits coordinates
         """
         self.position.emit(pos)
+        if self.modelFlag:
+            self.coordsScaler.emit(pos)
 
     def emitFrame(self):
         """
