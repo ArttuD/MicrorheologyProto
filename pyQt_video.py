@@ -97,28 +97,41 @@ class App(QWidget):
         self.win.setLayout(self.vlayout)
         self.win.show()  
 
-    def cfg_image(self):
-        """
-        Create label, add accesories and label to layout
-        """
-        self.label = QLabel(self)
-        #self.label.resize(480, 480)
-    
+    def set_black_screen(self):
+
         background = np.zeros((1536, 2048))
         h, w = background.shape
         bytesPerLine = 1 * w
         convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Grayscale8)
         p = convertToQtFormat.scaled(480, 480) #Qt.AspectRatioMode.KeepAspectRatio
         self.label.setPixmap(QPixmap(QPixmap.fromImage(p)))
+
+    def cfg_image(self):
+
+        """
+        Create label, add accesories and label to layout
+        """
+
+        self.label = QLabel(self)
+        #self.label.resize(480, 480)
+    
+        self.set_black_screen()
+
         self.label.mousePressEvent = self.getPos
 
         #Accesories
+
+        #Camera
         self.accessory.addWidget(self.snapbtn)
         self.accessory.addWidget(self.trackerCheck)
+
+        #feedback type
         self.accessory.addWidget(self.feedBack)
-        self.accessory.addWidget(self.autotune)
         self.accessory.addWidget(self.MgFeedback)
         self.accessory.addWidget(self.PositionFeedback)
+
+        #tuning
+        self.accessory.addWidget(self.autotune)
         self.accessory.addWidget(self.CurrentValueLabel,QtCore.Qt.AlignmentFlag.AlignTop)
         self.accessory.setSpacing(1)
         
@@ -142,7 +155,6 @@ class App(QWidget):
         #Init data for the plots
         self.initData()
  
-
         #Current Plot
         self.dataLineTarget = self.plotI.plot(x=self.time, y=self.target, pen=pg.mkPen(color="red"), symbol='o', symbolSize=10, row = 0, col = 0, name = "target")
         self.dataLineMeasured = self.plotI.plot(x=self.time, y=self.measured, pen=pg.mkPen(color="blue"), symbol='s', symbolSize=10, row = 0, col = 0, name = "Measured current")
@@ -195,9 +207,12 @@ class App(QWidget):
     def initData(self):
         #Init Data
         self.time = np.zeros(500)
+
         self.target = np.zeros(500)
         self.measured = np.zeros(500)
+
         self.measuredB = np.zeros(500)
+        
         self.trackX = np.zeros(50)
         self.trackY = np.zeros(50)
 
@@ -205,30 +220,45 @@ class App(QWidget):
         """
         Create and connect buttons, sliders, and check box
         """
+        #Buttons for modes
+
+        self.autotune = QCheckBox("Autotune")
+        self.autotune.stateChanged.connect(self.checkAutoTune)
+
+        #tracker on/off
+        self.trackerCheck = QCheckBox("Track")
+        self.trackerCheck.stateChanged.connect(self.checkTrack)
+        #self.trackerCheck.setCheckState(Qt.CheckState.Checked)
+
+        #Feedback on/off
+        self.feedBack = QCheckBox("FeedBack")
+        self.feedBack.stateChanged.connect(self.current_feedback)
+        self.feedBack.setCheckState(Qt.CheckState.Checked)
+
+        self.MgFeedback = QCheckBox("B - Feedback")
+        self.MgFeedback.stateChanged.connect(self.B_feedback)
+
+        self.PositionFeedback = QCheckBox("Position - Feedback")
+        self.PositionFeedback.stateChanged.connect(self.changePosition)
+
+        #Process
 
         #Start measurement
         self.btnStart = QPushButton("Start measurement")
         self.btnStart.pressed.connect(self.start)
         self.btnStart.setStyleSheet("background-color : green")
+
         self.hbutton.addWidget(self.btnStart)
 
         #Calibration button and autotune checkbox
-        self.CalibBtn = QPushButton("Tune")
+        self.CalibBtn = QPushButton("Manual input")
         self.CalibBtn.pressed.connect(self.calibrate)
         self.CalibBtn.setStyleSheet("background-color : green")
+
         self.hbutton.addWidget(self.CalibBtn)
-
-        self.autotune = QCheckBox("Autotune")
-        self.autotune.stateChanged.connect(self.checkAutoTune)
-
-        self.MgFeedback = QCheckBox("B - Feedback")
-        self.MgFeedback.stateChanged.connect(self.changeFeedBack)
-
-        self.PositionFeedback = QCheckBox("Position - Feedback")
-        self.PositionFeedback.stateChanged.connect(self.changePosition)
         
         #Stream camera
-        self.streamBtn = QPushButton("Video Stream")
+        self.streamBtn = QPushButton("Live")
         self.streamBtn.pressed.connect(self.livestream)
         self.streamBtn.setStyleSheet("background-color : green")
         self.hbutton.addWidget(self.streamBtn)
@@ -252,15 +282,7 @@ class App(QWidget):
         self.snapbtn = QPushButton("snap")
         self.snapbtn.pressed.connect(self.snapImage)
         self.snapbtn.setStyleSheet("background-color : blue")
-        #tracker on/off
-        self.trackerCheck = QCheckBox("Track")
-        self.trackerCheck.stateChanged.connect(self.checkTrack)
-        self.trackerCheck.setCheckState(Qt.CheckState.Checked)
-
-        #Feedback on/off
-        self.feedBack = QCheckBox("FeedBack")
-        self.feedBack.stateChanged.connect(self.checkFeed)
-        self.feedBack.setCheckState(Qt.CheckState.Checked)
+        
 
         #Resistance slider 
         self.Slider1Layout = QVBoxLayout()
@@ -307,13 +329,19 @@ class App(QWidget):
         self.hlabels.addLayout(self.Slider2Layout)
 
 
-    def checkFeed(self,state):
+    def current_feedback(self,state):
         if state == 2:
             self.feedBackFlag = True 
             self.driver.feedBackFlag = True
         else:
             self.feedBackFlag = False
             self.driver.feedBackFlag = False
+
+    def B_feedback(self,state):
+        if state == 2:
+            self.driver.BFeedback = True
+        else:
+            self.driver.BFeedback = False
 
     def checkTrack(self,state):
         if state == 2:
@@ -322,18 +350,6 @@ class App(QWidget):
         else:
             self.trackFlag = False
             self.cam.trackFlag = False
-
-    def checkAutoTune(self,state):
-        if state == 2:
-            self.calibFlag = True
-        else:
-            self.calibFlag = False
-
-    def changeFeedBack(self,state):
-        if state == 2:
-            self.driver.BFeedback = True
-        else:
-            self.driver.BFeedback = False
 
     def changePosition(self,state):
         if state == 2:
@@ -348,8 +364,17 @@ class App(QWidget):
             self.model = None
             self.driver.addModel(None)
 
+    def checkAutoTune(self,state):
+        if state == 2:
+            self.calibFlag = True
+        else:
+            self.calibFlag = False
+
     def livestream(self):
-        #Start camera stream
+        """
+        Start camera stream
+        *** No problems
+        """
         self.liveFlag = True
         self.streamBtn.setStyleSheet("background-color : white")
         
@@ -357,21 +382,53 @@ class App(QWidget):
         self.x.start()
 
     def snapImage(self):
+        """
+        Snap image to initiate tracker
+        *** No problems
+        """
         #snap image
         self.snapFlag = True
         self.snapbtn.setStyleSheet("background-color : white")
         self.snapThread = threading.Thread(target=self.cam.snapImage)
         self.snapThread.start()
 
+        self.snapThread.join()
+
+        self.snapbtn.setStyleSheet("background-color : green")
+
+    def calibrate(self):
+        """
+        -Autotune - calibration of magnetic sensor
+        -Manual - Kalibrate current sensor to match the input
+        ***Problems
+        * Autotune, not tested!
+        """
+        self.createAndCheckFolder(self.textField.toPlainText())
+        self.driver.root = self.textField.toPlainText()
+
+        self.CalibBtn.setStyleSheet("background-color : white")
+        
+        if self.calibFlag:
+            print("Calibration, cannot be stopped!")
+            self.xTune = threading.Thread(target=self.driver.autoTune)
+            self.xTune.start()
+            self.tuneFlag = True
+        else:
+            self.xTune = threading.Thread(target=self.driver.tune)
+            self.xTune.start()
+            self.tuneFlag = True
+        
+        #self.CalibBtn.setStyleSheet("background-color : green")
+
     def updateI(self, value):
         #Update input current
         self.sliderILabel.setText(f'Current value: {value/100}')
-        self.driver.currentToWrite = value/100
+        self.driver.changeWritingCurrent(value/100)
 
     def updateR(self,value):
         #Update resistance
         self.sliderR1Label.setText(f'Resistance 1 value: {value/100}')
-        self.driver.resistance1 = value/100
+        self.driver.changeWritingRes(value/100)
 
     def getPos(self, event):
         """
@@ -423,25 +480,7 @@ class App(QWidget):
         with self.rectangleQue.mutex:
             self.rectangleQue.queue.clear()
 
-    def calibrate(self):
-        """
-        Start manual and automatic cfg
-        """
-        self.createAndCheckFolder(self.textField.toPlainText())
-        self.driver.root = self.textField.toPlainText()
 
-        self.CalibBtn.setStyleSheet("background-color : white")
-        
-        if self.calibFlag:
-            self.xTune = threading.Thread(target=self.driver.autoTune)
-            self.xTune.start()
-            self.tuneFlag = True
-        else:
-            self.xTune = threading.Thread(target=self.driver.tune)
-            self.xTune.start()
-            self.tuneFlag = True
-        
-        #self.CalibBtn.setStyleSheet("background-color : green")
 
 
     def start(self):
@@ -460,8 +499,6 @@ class App(QWidget):
         self.y = threading.Thread(target=self.driver.start)
         self.y.start()
         
-        time.sleep(3)
-
         self.x = threading.Thread(target=self.cam.recordMeasurement)
         self.x.start()
         
@@ -487,22 +524,24 @@ class App(QWidget):
 
             self.CalibBtn.setStyleSheet("background-color : green")
             self.btnStop.setStyleSheet("background-color : white")
+            if self.xTune.is_alive():
 
-            #Stop driver
-            self.driver.kill()
-            self.xTune.join()
+                #Stop driver
+                self.driver.kill()
+                self.xTune.join()
 
             #reset
             self.tuneFlag = False
             self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
             self.btnStop.setStyleSheet("background-color : red")
+
         elif self.liveFlag:
             #Close streaming camera
             self.cam.kill()
             self.x.join()
             time.sleep(1)
             #reset
-
+            self.set_black_screen()
             self.streamBtn.setStyleSheet("background-color : green")   
             self.liveFlag = False
 
@@ -512,10 +551,11 @@ class App(QWidget):
 
             #Stop camera and current driver
             self.cam.kill()
-            self.driver.kill()
+            if self.y.is_alive():
+                self.driver.kill()
+                self.y.join()
 
             self.x.join()
-            self.y.join()
 
             if self.modelFlag:
                 self.model.initMag(0,0)
@@ -527,7 +567,7 @@ class App(QWidget):
             pass
 
 
-        time.sleep(5)
+        time.sleep(1)
 
         #clean
         self.initData()
@@ -577,7 +617,7 @@ class App(QWidget):
         self.dataLineMeasuredB.setData(self.time, self.measuredB)
 
         #Update fields
-        self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(np.abs(data[1]),np.abs(data[2]),np.abs(data[3])))
+        self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(np.abs(data[1]),np.abs(data[2]),data[3]))
 
         #Update axis
         if data[0]*self.samplingHz>10:

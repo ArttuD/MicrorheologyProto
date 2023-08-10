@@ -24,8 +24,8 @@ parser.add_argument("--samplingFreq", "-sf", required=False, default = 10000,
                     help = "Sampling frequency")                    
 
 args = parser.parse_args()
-
 isExist = os.path.exists(args.path)
+
 if not isExist:
    # Create a new directory because it does not exist
    os.makedirs(args.path)

@@ -13,15 +13,17 @@ class tracker():
         self.h = None
         self.k = None
 
+        self.x_scale = 2048/480
+        self.y_scale = 1536/480
 
-        self.x = int(np.floor(boundaries[0][0][0]*2048/480))
-        self.x2 = int(np.floor(boundaries[1][0][0]*2048/480))
-        self.y = int(np.floor(boundaries[0][0][1]*1536/480))
-        self.y2 = int(np.floor(boundaries[1][0][1]*1536/480))
+        # change from screen coordinates to image coordinates
+        self.x = boundaries[0][0][0]*self.x_scale
+        self.x2 = boundaries[1][0][0]*self.x_scale
+        self.y = boundaries[0][0][1]*self.y_scale
+        self.y2 = boundaries[1][0][1]*self.y_scale
 
-        self.xOrg = boundaries[0][0][0]*2048/480
-        self.yOrg = boundaries[0][0][1]*1536/480
-
+        self.xOrg = boundaries[0][0][0]*self.x_scale
+        self.yOrg = boundaries[0][0][1]*self.y_scale
         self.binary = None
  
         """
@@ -36,27 +38,41 @@ class tracker():
         self.col = (0, 255, 0)
         self.Dict = {"x":[],"y":[],"t":[]}
         self.t = 0
+    
+    def _round(self,x):
+        return int(np.floor(x))
+
+    def coords_to_int(self):
+        # round to closest integer
+        return self._round(self.x),self._round(self.x2),\
+                self._round(self.y),self._round(self.y2)
 
     def main(self, img):
         self.frame = np.copy(img)
         self.w,self.h = self.frame.shape
-        self.frameCrop = np.copy(self.frame[self.x:self.x2,self.y:self.y2])
+        # take the closest sub image given the more accurate coordinates
+        x_norm,x2_norm,y_norm,y2_norm = self.coords_to_int()
+        
+        # coordinates are flipped all over the place. Fix by transpose
+        self.frameCrop = np.copy(self.frame.T[x_norm:x2_norm,y_norm:y2_norm])
+        
         self.ProcessCrop()
 
         return np.array([self.x,self.x2, self.y, self.y2]), img
 
     def ProcessCrop(self):
 
+        # TODO: This stabilizes tracks a lot 
+        # but might be useless with actual beads that are sharp
+        # so test !
+        #self.frameCrop = cv2.GaussianBlur(self.frameCrop,(3,3),0)
         ret3,binary = cv2.threshold(self.frameCrop,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        
-        
         if binary is None:
             binary = np.zeros_like(self.frameCrop)
         else:
             binary = 255-binary
         
         self.binary = np.copy(binary)
-
         contours,_ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         radius = -1
         
@@ -98,10 +114,6 @@ class tracker():
         self.Dict["x"].append((self.x2+self.x)/2)
         self.Dict["t"].append(self.t)
 
-        self.x = int(np.floor(self.x))
-        self.x2 = int(np.floor(self.x2))
-        self.y = int(np.floor(self.y))
-        self.y2 = int(np.floor(self.y2))
 
         self.xOrg = self.x
         self.yOrg = self.y    
@@ -135,10 +147,6 @@ class tracker():
             self.y = 0
         if self.y2<0:
             self.y2 = 0
-        self.x = int(self.x)
-        self.x2 = int(self.x2)
-        self.y = int(self.y)
-        self.y2 = int(self.y2)
 
     def closeAll(self):
         self.cap.release()
