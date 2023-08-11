@@ -1,4 +1,3 @@
-
 import nidaqmx
 from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
 from PyQt6.QtCore import pyqtSignal,QThread, pyqtSlot
@@ -53,7 +52,7 @@ class niDevice(QThread):
         self.MgOffset = None
 
         
-        self.Mgcoef = 0.73742302 #valid only 1A
+        self.Mgcoef = 1.74644288 #0.73742302 #valid only 1A
         self.scaler = 0.0
         self.sequence = None
         self.iteration = 0
@@ -90,7 +89,7 @@ class niDevice(QThread):
 
         offset = 0.1
         self.sequence[:5000] = offset
-        self.sequence[5000:] = offset + np.arange(self.NSamples-5000)*0.00001
+        self.sequence[5000:] = offset + np.arange(self.NSamples-5000)*0.00002
         #self.sequence[-1] = 0
 
     def SinWave(self):
@@ -416,7 +415,7 @@ class niDevice(QThread):
         """
         Manual tune source and ref. resistance
         """
-        self.calibrateMgSensor() #calibrate the Mg sensor
+        
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
         self.NSamples = np.inf #Continue until stopped
         self.initTasks()
@@ -425,7 +424,7 @@ class niDevice(QThread):
         threadProcess = threading.Thread(target = self.processTune)
         
         threadUser.start() #turn on voltage source and wait kill command
-        
+        self.calibrateMgSensor() #calibrate the Mg sensor
         #if self.MgOffset == None:
 
         
@@ -439,7 +438,7 @@ class niDevice(QThread):
         """
         Measurement
         """
-        self.calibrateMgSensor() #calibrate the Mg sensor 
+        
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq = self.FreqRet )
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
 
@@ -453,7 +452,7 @@ class niDevice(QThread):
 
         threadUser.start() #turn on voltage source and wait kill command
         #if self.MgOffset == None:
-         
+        self.calibrateMgSensor() #calibrate the Mg sensor 
         
         threadProcess.start() #start writer
         self.NiAlReader.start() #start reading 
@@ -466,7 +465,7 @@ class niDevice(QThread):
         Manual tune source and ref. resistance with linear sequence
         """
 
-        self.calibrateMgSensor() #calibrate the Mg sensor  
+        
         self.totalTime = 60
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
@@ -478,7 +477,7 @@ class niDevice(QThread):
         threadProcess = threading.Thread(target = self.processAutoTune)
         
         threadUser.start() #turn on voltage source and wait kill command
-
+        self.calibrateMgSensor() #calibrate the Mg sensor  
         #if self.MgOffset == None:
         
         

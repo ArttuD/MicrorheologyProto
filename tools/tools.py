@@ -35,9 +35,10 @@ class KalmanF():
 class PIDcontroller():
     
     def __init__(self, freq):
-        self.kp = 6
-        self.ki = 30
-        self.kd = 0.05
+        print("Created Current controller")
+        self.kp = 25#25
+        self.ki = 350 #30
+        self.kd = 0.0025 #0.075
         self.integral = 0
         self.past=0
         self.error = None
@@ -67,13 +68,14 @@ class PIDMGcontroller():
     
     def __init__(self,freq):
         print("Created MG controller")
-        self.kp = 35
-        self.ki = 20
-        self.kd = 0.5
+        self.kp = 20
+        self.ki = 350
+        self.kd = 0.000005
+
         self.integral = 0
         self.past=0
         self.error = None
-        self.emaFilter = EMA(0.5)
+        self.emaFilter = EMA(0.40)
         self.dt = 1/freq
     
     
@@ -115,7 +117,7 @@ class alphaBeta():
 
         self.vk = 0
 
-        self.dt = dt
+        self.dt = 1/dt
 
     def filterNow(self,xm):
 
