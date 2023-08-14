@@ -10,22 +10,32 @@ class positionScaling(QThread):
 
         super().__init__()
         self.position = None
-        self.root = "C:/Users/Asentaja/Git/MicrorheologyProto/resource/gradB.csv"
+        self.root = "C:/Users/Asentaja/Git/MicrorheologyProto/resource/Data_B.csv"
+        self.m = 3.5/(10*3.3*0.3)*1e-6
         self.emaFilter = EMA(0.85)
         
-        self.df = pd.read_csv(self.root, sep = "\t", skiprows= [0], names = ["r", "z", "dBz", "dBr"])
-        self.df.drop(self.df[self.df["r"]>0.8e-3].index, inplace = True)
+        self.df = None
+        self.past = 0
+        self.tracker = None
 
-        #Flip the frame
-        self.df["z"] = self.df["z"].max() - self.df["z"]
-
+        self.load_csv(self.root)
         self.field = np.stack([self.df["r"].values,self.df["z"].values], axis = 1)
+
         self.fieldArray =  np.asarray(self.field)
         self.dBzVal = self.df["dBz"].values
         self.dBrVal = self.df["dBr"].values
-        self.past = None
 
-        self.tracker = None
+        self.i = 0
+ 
+
+    def load_csv(self, root):
+        self.df = pd.read_csv(root, sep = "\t", skiprows= [0], names = ["r", "z", "dBz", "dBr"])
+        #drop not needed
+        self.df.drop(self.df[self.df["r"]>0.8e-3].index, inplace = True)
+        #Flip the frame
+        self.df["z"] = self.df["z"].max() - self.df["z"]
+
+    
 
     def addCamera(self,camera):
         self.tracker = camera
@@ -33,7 +43,16 @@ class positionScaling(QThread):
 
     @pyqtSlot(object)
     def receiver(self, data):
-        self.findPoint(data[0],data[1])
+
+        if self.i == 10:
+            x2 = data[1] 
+            x1 = data[0]
+            y2 = 1536 - data[3]
+            y1 = 1536 - data[2]
+            self.findPoint((x1+x2)/2,(y1+y2)/2)
+            self.i = 0
+        else:
+            self.i += 1
 
 
     def closestValue(self, node):
@@ -44,20 +63,26 @@ class positionScaling(QThread):
     def initMag(self,x,y):
         place = np.stack([x,y])
         idx = self.closestValue(place)
-        self.past =  (self.dBzVal[idx])**2 + (self.dBzVal[idx])**2
+        self.past =  np.sqrt((self.dBzVal[idx])**2 + (self.dBzVal[idx])**2)
 
     def findPoint(self,x,y):
-        x = self.emaFilter.filterNow(x)
-        y = self.emaFilter.filterNow(y)
+        x = self.emaFilter.filterNow(x)*self.m
+        y = self.emaFilter.filterNow(y)*self.m
+
         place = np.stack([x,y])
         idx = self.closestValue(place)
-        cB  = (self.dBzVal[idx])**2 + (self.dBzVal[idx])**2
+        
+        cB  = np.sqrt((self.dBzVal[idx])**2 + (self.dBzVal[idx])**2)
         
         error = cB-self.past
-        #self.past = cB
+        #print("plavce",cB, self.past)
+        self.past = cB
+        
+
         self.emitData(error)
     
     def emitData(self, data):
+        #print("Emiting: ", data)
         self.magData.emit(data)
 
 

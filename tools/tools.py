@@ -38,11 +38,11 @@ class PIDcontroller():
         print("Created Current controller")
         self.kp = 25#25
         self.ki = 350 #30
-        self.kd = 0.0025 #0.075
+        self.kd = 0.00005 #0.075
         self.integral = 0
         self.past=0
         self.error = None
-        self.emaFilter = EMA(0.5)
+        self.emaFilter = EMA(0.50)
 
         self.dt = 1/freq
     
@@ -70,7 +70,7 @@ class PIDMGcontroller():
         print("Created MG controller")
         self.kp = 20
         self.ki = 350
-        self.kd = 0.000005
+        self.kd = 0.0000005
 
         self.integral = 0
         self.past=0

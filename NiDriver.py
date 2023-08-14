@@ -2,6 +2,8 @@ import nidaqmx
 from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
 from PyQt6.QtCore import pyqtSignal,QThread, pyqtSlot
 
+import matplotlib.pyplot as plt
+
 
 import time
 import numpy as np
@@ -50,9 +52,10 @@ class niDevice(QThread):
         self.readerStreamIn = None
         self.currentToWrite = 0
         self.MgOffset = None
+        self.cutOFF = None
 
         
-        self.Mgcoef = 1.74644288 #0.73742302 #valid only 1A
+        self.Mgcoef = 1.49814091 #0.73742302 #valid only 1A
         self.scaler = 0.0
         self.sequence = None
         self.iteration = 0
@@ -69,7 +72,10 @@ class niDevice(QThread):
     def receiveScaler(self, data):
         with self.modelScaler.mutex:
             self.modelScaler.queue.clear()
-        self.modelScaler.put(self.Mgcoef*data)
+
+        scaler = 1/self.Mgcoef*data
+        print("before", data, "\ntunning ", scaler)
+        self.modelScaler.put(scaler)
 
     def generateStepWave(self):
         """
@@ -85,11 +91,15 @@ class niDevice(QThread):
         """
         Generate linear slope for calibration
         """
+
+        print("Generating slope")
         self.sequence = np.zeros(self.NSamples)
+        self.cutOFF = 5*self.FreqRet
 
         offset = 0.1
-        self.sequence[:5000] = offset
-        self.sequence[5000:] = offset + np.arange(self.NSamples-5000)*0.00002
+
+        self.sequence[:self.cutOFF] = offset
+        self.sequence[self.cutOFF:] = offset + np.arange(self.NSamples-self.cutOFF)*0.0001
         #self.sequence[-1] = 0
 
     def SinWave(self):
@@ -264,7 +274,8 @@ class niDevice(QThread):
         Fetch from que and send to filter+PID
         """
         measured = self.que.get()
-        measured[0] = 2*measured[0]
+        #print(measured, self.scaler)
+        measured[0] = 2*measured[0]-self.scaler
         measured[1] = measured[1]-self.MgOffset
         if self.feedBackFlag:
             kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]*self.Mgcoef*self.resistance1]), writeC*self.resistance1)
@@ -298,10 +309,10 @@ class niDevice(QThread):
                 measured[1] = np.abs(measured[1])
 
                 #data =  self.sequence[QueIndex]
-                data = self.checkLimits(data)#-self.scaler
+                data = self.checkLimits(data)
                 
                 #Emit Qt
-                if QueIndex%100 == 0:
+                if QueIndex%10 == 0:
                     self.s  = np.array([QueIndex, self.sequence[QueIndex],  measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
                     self.setData.emit(self.s)
                     self.updateScaler()
@@ -353,7 +364,7 @@ class niDevice(QThread):
                 self.NiAlWriter.write(data,1000)
                 
                 #Emit to Qt
-                if QueIndex%100 == 0:
+                if QueIndex%10 == 0:
                     self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
                     self.setData.emit(self.s)
 
@@ -388,16 +399,22 @@ class niDevice(QThread):
 
     def fitCalibration(self):
         maxIndex = np.where(self.NpyStorage[2,:] >=0.5)[0][0]
-        x = self.NpyStorage[2,5000:maxIndex]
+        x = self.NpyStorage[2,self.cutOFF:maxIndex]
         x = x-x[0]
         x = x[:,np.newaxis]
-        y = self.NpyStorage[3,5000:maxIndex]
+        y = self.NpyStorage[3,self.cutOFF:maxIndex]
         y = y-y[0]
         k, _, _, _  = np.linalg.lstsq(x,y, rcond=None)
         
         print("New conversion factor: ", 1/np.abs(k))
         
         self.Mgcoef = 1/float(k[0])
+
+        plt.scatter(x,y, label = "data", color = "red", alpha= 0.4)
+        plt.plot(x, k*x, label = "fit", color = "blue")
+        plt.legend()
+        plt.savefig('./calib.png')   # save the figure to file
+        plt.close() 
 
     def initTasks(self):
         """
@@ -507,12 +524,13 @@ class niDevice(QThread):
                 #data = self.sequence[QueIndex]
                 
                 data = self.checkLimits(data)
+                #print(data)
 
                 #write
                 self.NiAlWriter.write(data,1000)
 
                 #emit
-                if QueIndex%100 == 0:
+                if QueIndex%10 == 0:
                     self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
                     self.setData.emit(self.s)
 

@@ -6,7 +6,7 @@ from NiDriver import *
 
 parser = argparse.ArgumentParser(description='Microrheology test setup.')
 parser.add_argument('--path', '-p', required = False, type = str, default = r'C:\Users\Asentaja\Git\MicrorheologyProto\test', help='Save path for all the files, creates folder etc')
-parser.add_argument("--buffer_size_cfg", "-b", required=False, default = 10,
+parser.add_argument("--buffer_size_cfg", "-b", required=False, default = 100,
                     help = "buffer size for sampling")
 parser.add_argument("--chans_in", "-c", required=False, default = 2,
                     help = "Number of sensors for sampling")
