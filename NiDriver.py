@@ -44,7 +44,7 @@ class niDevice(QThread):
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
         self.FreqRet = int(self.samplingFreq/args.buffer_size_cfg)
         self.que = Queue(maxsize=self.NSamples) #Change if too much
-        self.NpyStorage = np.zeros((4,self.NSamples))
+        self.NpyStorage = np.zeros((5,self.NSamples))
         self.bufferIn = np.zeros((self.chans_in, self.buffer_size))
         self.values = np.zeros((self.chans_in,1))
 
@@ -74,7 +74,7 @@ class niDevice(QThread):
             self.modelScaler.queue.clear()
 
         scaler = 1/self.Mgcoef*data
-        print("before", data, "\ntunning ", scaler)
+        #print("before", data, "\ntunning ", scaler)
         self.modelScaler.put(scaler)
 
     def generateStepWave(self):
@@ -156,7 +156,7 @@ class niDevice(QThread):
         """
         for i in range(5):
         #Write zeros to reset to source
-            self.NiAlWriter.write(0,1000)
+            self.NiAlWriter.write(0,1000)   
 
         #stop tasks
         self.NiAlWriter.stop()
@@ -325,7 +325,7 @@ class niDevice(QThread):
                 self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
                 self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
                 self.NpyStorage[3,QueIndex] = measured[1]
-
+                self.NpyStorage[4,QueIndex] = self.scaler
                 QueIndex += 1
             else:
                 #empty que or 
@@ -538,6 +538,7 @@ class niDevice(QThread):
                 self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
                 self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
                 self.NpyStorage[3,QueIndex] = measured[1]
+                self.NpyStorage[4,QueIndex] = self.scaler
 
                 QueIndex += 1
             else:

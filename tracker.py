@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import pickle
+import os
 
 class tracker():
 
@@ -122,7 +123,7 @@ class tracker():
 
     def saveData(self,path):
         # save dictionary to person_data.pkl file
-        with open(os.path.join(path,"trackingData"), 'wb') as fp:
+        with open(os.path.join(path,"trackingData.pickle"), 'wb') as fp:
             pickle.dump(self.Dict, fp)
 
     def validateCoordinates(self):

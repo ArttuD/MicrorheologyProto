@@ -157,7 +157,6 @@ class baslerCam(QThread):
                 break
 
 
-
     def recordMeasurement(self):
         """
         Record predefined number of frames
@@ -197,6 +196,7 @@ class baslerCam(QThread):
                     #self.finishBuffer(i)
         
         print("Camera task done!")
+        self.trackerTool.saveData(self.path)
         np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(self.frameCount)),self.timeStamp)
 
     def emitPosition(self,pos):
