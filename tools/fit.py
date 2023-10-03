@@ -24,8 +24,8 @@ class fit():
 
         self.s_ratio = int(100/40)
 
-        self.creep_end = 
-        self.creep_start = 
+        self.creep_end = None
+        self.creep_start = int(10000/100*5/self.s_ratio)
 
     def process(self):
         self.df_current = pd.DataFrame(self.file_driver.T, columns= ["time", "target", "current", "B", "offset"])
@@ -39,7 +39,15 @@ class fit():
         self.df_track["distance"] = self.df_track["distance"].values.max()- self.df_track["distance"] 
         self.df_track["time"] = self.df_track["t"]*1/40
 
+        self.creep_end = int(df_track["t"].max()*0.75)
+
     def fit(self):
+        fig, ax = plt.sub
+        plt.plot(df_track["time"], df_track["distance"], label = "data")
+        t_hat = np.arange(df_track["time"][start_creep:end_creep].min(),df_track["time"][start_creep:end_creep].max(), 0.001)
+
+        p, p_ = curve_fit(kelvin, df_track["time"][start_creep:end_creep]-df_track["time"][start_creep:end_creep].values[0], df_track["distance"][start_creep:end_creep], method = "dogbox")
+        plt.plot(t_hat, kelvin(t_hat-t_hat[0],*p), label = "Kelvin-Voigt")
 
     def maxwell_rel(self, t, E, tau):
         return E*np.exp(-t/tau)
