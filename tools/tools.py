@@ -35,7 +35,7 @@ class KalmanF():
 class PIDcontroller():
     
     def __init__(self, freq):
-        print("Created Current controller")
+        #print("Created Current controller")
         self.kp = 25#25
         self.ki = 350 #30
         self.kd = 0.00005 #0.075

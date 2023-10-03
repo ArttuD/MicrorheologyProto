@@ -9,36 +9,46 @@ import sys
 import os
 import matplotlib.pyplot as plt
 import cv2
+import time
+import datetime
 
-from tracker import tracker
+from tools.tracker import tracker
 from queue import Queue
 
+from threading import Event, Thread
 
-class baslerCam(QThread):
+
+class baslerCam(QThread, Thread):
+
     changePixmap = pyqtSignal(QImage)
     position = pyqtSignal(object)
     coordsScaler = pyqtSignal(object)
-
-    def __init__(self, args):
+    print_str = pyqtSignal(str) #self.print_str.emit(pos)
+ 
+    def __init__(self, event, args):
         super().__init__()
         self.args = args
         self.path = args.path
 
+        self.event = event
+
         #flags
-        self.killCommand = Queue(maxsize=1)
+        self.saving_que = Queue(maxsize=300)
         self.trackFlag = False
         self.modelFlag = False
+        self.saveFlag = False
 
         #variables
         self.frame = None
         self.finalboundaries = None
         self.boundaryFinal = None
         self.trackerTool = None
-        self.timeStamp = np.array([0])
 
+        self.timeStamp = np.array([0])
+        
         #init camera
         self.cam = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateFirstDevice())
-        print("Camera connected successfully")
+        
         self.converter = pylon.ImageFormatConverter()
 
         # converting to opencv bgr format
@@ -49,18 +59,6 @@ class baslerCam(QThread):
 
         #cfg camera
         self.cfgCamera()
-
-    def kill(self):
-        """
-        Kill threads
-        """
-        self.killCommand.put(1)
-
-    def changeModelFlag(self):
-        if self.modelFlag:
-            self.modelFlag = False
-        else:
-            self.modelFlag = True
 
     def cfgCamera(self):
         """
@@ -74,14 +72,13 @@ class baslerCam(QThread):
         self.exposureTime = self.cam.ExposureTime.GetValue()
         self.width = self.cam.Width.GetValue()
         self.height = self.cam.Height.GetValue()
+
         self.gain = self.cam.Gain.GetValue()
         self.pixelFormat = self.cam.PixelFormat.GetValue()
         self.FrameRate = self.cam.AcquisitionFrameRate.GetValue()
         self.cam.MaxNumBuffer.SetValue(1000)
         self.frameCount = int(self.args.time*self.args.framerate)
-
-        print(self.frameCount, "rate", self.FrameRate)
-
+        
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
         
@@ -95,31 +92,32 @@ class baslerCam(QThread):
         """
         Stream video until kill command
         """
-        self.killCommand = Queue(maxsize=1)
+        self.print_str.emit("Live streaming")
         self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly) #return the last frame
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
-            if (grab.GrabSucceeded()) & (self.killCommand.empty() == True):
+            if (grab.GrabSucceeded()) & (self.event.is_set() == False):
                 self.frame = grab.GetArray().astype("uint8")
                 # emit frame
                 self.emitFrame()
                 # release buffer
                 grab.Release()
             else:
+                self.print_str.emit("Camera task done!")
                 grab.Release()
-                empty = self.killCommand.get()
                 self.cam.StopGrabbing()
-                #self.cam.resetBuffer()
                 break
         
-        print("Camera task done!")
         return 0
+
+    def print_info(self):
+        self.print_str.emit("Camera set-up\nMono8 colortype \n{} fps".format( self.frameCount, self.FrameRate))
+
 
     def snapImage(self):
         """
         Snap one image
         """
-        self.killCommand = Queue(maxsize=1)
         with self.cam.GrabOne(1000) as res:
             image = self.converter.Convert(res)
             self.frame = image.GetArray()
@@ -137,67 +135,94 @@ class baslerCam(QThread):
         """
         Processes the remaining frames in the buffer
         """
+
+        self.print_str.emit("Finishing the camera buffer")
         while True:
-            print("processing the remaining image stream!")
+            self.print_str.emit("processing the remaining image stream!")
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
             if (grab.GrabSucceeded()):
                 image = self.converter.Convert(grab)
                 self.frame = image.GetArray()
+
                 if self.trackFlag:
                     #Send to tracker
                     coords, self.frame = self.trackerTool.main(self.frame)
                     #Emit coordinates
                     self.emitPosition(coords)
+
+                if self.saveFlag:
+                    self.saving_que.put(self.frame)
+
                 if i%5 == 0:
                     self.emitFrame()
                 
                 i +=1
             else:
-                print("Camera buffer empty, closing!!")
+                self.print_str.emit("Camera buffer empty, closing!!")
                 break
+        
+        return 1
 
 
     def recordMeasurement(self):
         """
         Record predefined number of frames
         """
+        if self.saveFlag:
+            save_event = Event()
+            self.save_thread = Thread(target=self.camera_saving, args=(save_event,))
+            self.save_thread.start()
+
         #Timed snaps and put to que
         self.cam.StartGrabbingMax(self.frameCount)
         #self.cam.StartGrabbing(pylon.GrabStrategy_LatestImages)
-        self.killCommand = Queue(maxsize=1)
         i = 0
-        
+    
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
             
-            if (grab.GrabSucceeded()) & (self.killCommand.empty() == True) & (i <= self.frameCount):
+            if (grab.GrabSucceeded()) & (self.event.is_set() == False) & (i <= self.frameCount):
                 image = self.converter.Convert(grab)
                 self.frame = image.GetArray()
-                #self.frame = grab.GetArray().astype("uint8")
+                
                 if self.trackFlag:
                     #Send to tracker
                     coords, self.frame = self.trackerTool.main(self.frame)
                     
                     #Emit coordinates
                     self.emitPosition(coords)
-                    
-                    pass
+
+                if self.saveFlag:
+                    self.saving_que.put(self.frame)
+
                 #Viz every 5th
                 if i%5 == 0:
                     self.emitFrame()
+
                 grab.Release()
                 i += 1
             else:
-                grab.Release()
-                if self.killCommand.empty() == False:
-                    results = self.killCommand.get()
                 
                 self.cam.StopGrabbing()
-                    #self.finishBuffer(i)
+                #_ = self.finishBuffer(i)
+                grab.Release()
         
-        print("Camera task done!")
-        self.trackerTool.saveData(self.path)
-        np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(self.frameCount)),self.timeStamp)
+        
+        if self.saveFlag:
+            self.print_str.emit("Wait until saved")
+            save_event.set()
+            np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(datetime.date.today())),self.timeStamp)
+            if self.trackFlag:
+                self.trackerTool.saveData(self.path)
+
+            self.save_thread.join()
+            save_event.clear()
+
+        self.print_str.emit("Camera task done!")
+
+            
+        
+        return 1
 
     def emitPosition(self,pos):
         """
@@ -226,7 +251,24 @@ class baslerCam(QThread):
         # save dictionary to person_data.pkl file
         with open('person_data.pkl', 'wb') as fp:
             pickle.dump(person, fp)
-            print('dictionary saved successfully to file')
+            self.print_str.emit('dictionary saved successfully to file')
+
+    def camera_saving(self, event_saver):
+        out = cv2.VideoWriter(os.path.join(self.path,'measurement_{}.avi'.format(datetime.date.today())), cv2.VideoWriter_fourcc(*'MJPG'), int(self.FrameRate), (int(self.width),int(self.height)))
+
+        while True:
+            if (self.saving_que.empty() == False):
+                frame = self.saving_que.get()
+                out.write(np.stack((frame.astype("uint8"),frame.astype("uint8"),frame.astype("uint8")), axis = -1))
+            else:
+                if not event_saver.is_set():
+                    time.sleep(0.01)
+                else:
+                    break
+
+        
+        out.release()
+        return 1
 
     def close(self):
         self.cam.Close() 

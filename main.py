@@ -1,8 +1,7 @@
 import argparse
 import sys
 import os
-from pyQt_video import *
-from NiDriver import *
+from pyQt import *
 
 parser = argparse.ArgumentParser(description='Microrheology test setup.')
 parser.add_argument('--path', '-p', required = False, type = str, default = r'C:\Users\Asentaja\Git\MicrorheologyProto\test', help='Save path for all the files, creates folder etc')
