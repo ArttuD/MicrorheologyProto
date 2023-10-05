@@ -55,7 +55,6 @@ class niDevice(QThread, Event):
         self.currentToWrite = 0
         self.MgOffset = None
         self.cutOFF = None
-
         
         self.Mgcoef = 1.49814091 #0.73742302 #valid only 1A
         self.scaler = 0.0
@@ -94,7 +93,11 @@ class niDevice(QThread, Event):
                 break
             else:
                 time.sleep(1)
-        
+
+        if self.modelFlag:
+            with self.modelScaler.mutex:
+                self.modelScaler.queue.clear()
+
         self.threadProcess.join()
         self.iteration = 0 
         self.NiAlReader.close()
@@ -105,7 +108,6 @@ class niDevice(QThread, Event):
 
 
     def updateScaler(self):
-
         if self.modelScaler.empty() == False:
             self.scaler = self.modelScaler.get()
     
@@ -249,6 +251,8 @@ class niDevice(QThread, Event):
                 if QueIndex%10 == 0:
                     self.s  = np.array([QueIndex, self.sequence[QueIndex],  measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
                     self.setData.emit(self.s)
+
+                if self.modelFlag:
                     self.updateScaler()
             
                 #write

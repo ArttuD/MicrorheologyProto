@@ -399,6 +399,8 @@ class App(QWidget):
 
             self.model = None
             self.driver.model = None
+
+            self.cam.modelFlag = False
             self.driver.modelFlag = False
 
     def checkAutoTune(self,state):
@@ -486,7 +488,7 @@ class App(QWidget):
             self.cam.initTracker()
 
             if self.modelFlag:
-                self.model.initMag((self.x2-self.x1)/2,((self.y2-self.y1)/2))
+                self.model.initMag(np.abs((self.x2-self.x1)/2),np.abs(((self.y2-self.y1)/2)))
 
             self.snapbtn.setStyleSheet("background-color : green")
             self.snapFlag = False
@@ -662,6 +664,8 @@ class App(QWidget):
         if data[0]*self.samplingHz>10:
             self.plotI.setXRange(data[0]*self.samplingHz-10, data[0]*self.samplingHz+10, padding=0)
             self.plotB.setXRange(data[0]*self.samplingHz-10, data[0]*self.samplingHz+10, padding=0)
+
+
 
     @pyqtSlot(object)
     def receiveTrackData(self,data):

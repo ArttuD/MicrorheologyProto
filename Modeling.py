@@ -35,7 +35,6 @@ class positionScaling(QThread):
         #Flip the frame
         self.df["z"] = self.df["z"].max() - self.df["z"]
 
-    
 
     def addCamera(self,camera):
         self.tracker = camera
@@ -43,6 +42,9 @@ class positionScaling(QThread):
 
     @pyqtSlot(object)
     def receiver(self, data):
+        """
+        Receive coordinates from Camera
+        """
 
         if self.i == 10:
             x2 = data[1] 
@@ -66,10 +68,11 @@ class positionScaling(QThread):
         self.past =  np.sqrt((self.dBzVal[idx])**2 + (self.dBzVal[idx])**2)
 
     def findPoint(self,x,y):
-        x = self.emaFilter.filterNow(x)*self.m
-        y = self.emaFilter.filterNow(y)*self.m
+        x = x*self.m
+        y = y*self.m
 
         place = np.stack([x,y])
+        print("{x,y}", place)
         idx = self.closestValue(place)
         
         cB  = np.sqrt((self.dBzVal[idx])**2 + (self.dBzVal[idx])**2)
@@ -78,7 +81,6 @@ class positionScaling(QThread):
         #print("plavce",cB, self.past)
         self.past = cB
         
-
         self.emitData(error)
     
     def emitData(self, data):
