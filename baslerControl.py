@@ -17,6 +17,8 @@ from queue import Queue
 
 from threading import Event, Thread
 
+import ffmpeg
+
 
 class baslerCam(QThread, Thread):
 
@@ -196,11 +198,13 @@ class baslerCam(QThread, Thread):
                     self.saving_que.put(self.frame)
 
                 #Viz every 5th
-                if i%5 == 0:
+                if i%10 == 0:
+
                     self.emitFrame()
 
                 grab.Release()
                 i += 1
+                #print("Camera", i)
             else:
                 
                 self.cam.StopGrabbing()
@@ -229,6 +233,7 @@ class baslerCam(QThread, Thread):
         Emits coordinates
         """
         self.position.emit(pos)
+
         if self.modelFlag:
             self.coordsScaler.emit(pos)
 
@@ -254,12 +259,27 @@ class baslerCam(QThread, Thread):
             self.print_str.emit('dictionary saved successfully to file')
 
     def camera_saving(self, event_saver):
-        out = cv2.VideoWriter(os.path.join(self.path,'measurement_{}.avi'.format(datetime.date.today())), cv2.VideoWriter_fourcc(*'MJPG'), int(self.FrameRate), (int(self.width),int(self.height)))
+
+        """
+        out = cv2.VideoWriter(out_name, cv2.VideoWriter_fourcc(*'MJPG'), int(self.FrameRate), (int(self.width),int(self.height)))
+        """
+        
+        out_name = os.path.join(self.path,'measurement_{}.avi'.format(datetime.date.today()))
+
+        out_process = ( 
+            ffmpeg 
+        .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'
+        .format(self.width, self.height)) 
+        .output(out_name, pix_fmt='yuv420p') .overwrite_output() 
+        .run_async(pipe_stdin=True) 
+        )
 
         while True:
             if (self.saving_que.empty() == False):
                 frame = self.saving_que.get()
-                out.write(np.stack((frame.astype("uint8"),frame.astype("uint8"),frame.astype("uint8")), axis = -1))
+                frame = np.stack((frame.astype("uint8"),frame.astype("uint8"),frame.astype("uint8")), axis = -1)
+                out_process.stdin.write( img.tobytes() )
+                #out.write(frame)
             else:
                 if not event_saver.is_set():
                     time.sleep(0.01)
@@ -267,7 +287,9 @@ class baslerCam(QThread, Thread):
                     break
 
         
-        out.release()
+        #out.release()
+        out_process.stdin.close()
+        out_process.wait()
         return 1
 
     def close(self):

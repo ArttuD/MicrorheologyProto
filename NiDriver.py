@@ -98,6 +98,12 @@ class niDevice(QThread, Event):
             with self.modelScaler.mutex:
                 self.modelScaler.queue.clear()
 
+        with self.modelScaler.mutex:
+            self.modelScaler.queue.clear()
+
+        with self.modelScaler.mutex:
+            self.modelScaler.queue.clear()
+
         self.threadProcess.join()
         self.iteration = 0 
         self.NiAlReader.close()

@@ -72,6 +72,8 @@ class App(QWidget):
 
         self.cam.print_info()
 
+        self.camere_i = 0
+
 
     def initUI(self):
         
@@ -488,7 +490,7 @@ class App(QWidget):
             self.cam.initTracker()
 
             if self.modelFlag:
-                self.model.initMag(np.abs((self.x2-self.x1)/2),np.abs(((self.y2-self.y1)/2)))
+                self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
             self.snapbtn.setStyleSheet("background-color : green")
             self.snapFlag = False
@@ -634,7 +636,10 @@ class App(QWidget):
         """
         Image signal pipe
         """
+        self.camere_i += 1
+
         self.receivedFrame = image
+        #print("Qt", self.camere_i*10)
 
         if (self.liveFlag == False) & (self.trackFlag == True) & (self.snapFlag == False):
 
@@ -672,6 +677,7 @@ class App(QWidget):
         """
         Tracker signal pipe 2048, 1536
         """
+        
         x2 = data[1] 
         x1 = data[0]
         y2 = 1536 - data[3]

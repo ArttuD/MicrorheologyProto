@@ -24,12 +24,6 @@ class positionScaling(QThread):
 
         self.df = self.load_csv(self.root)
 
-        self.field = np.stack([self.df["r"].values,self.df["z"].values], axis = 1)
-
-        self.fieldArray =  np.asarray(self.field)
-        self.dBzVal = self.df["dBz"].values
-        self.dBrVal = self.df["dBr"].values
-
         self.i = 0
  
 
@@ -55,7 +49,23 @@ class positionScaling(QThread):
         df["Bx"] = scipy.ndimage.gaussian_filter1d(df["Bx"].values,5)
         df["By"] = scipy.ndimage.gaussian_filter1d(df["By"].values,5)
 
+        self.x = df["x"].values
+        self.y = df["y"].values
+
+        self.Bx = df["Bx"].values
+        self.By = df["By"].values
+
+
         return df
+
+    def initMag(self,x,y):
+        x = x*self.m
+        y = y*self.m
+
+        y = np.abs(y - self.symmetry_point)
+        mg_idx = np.where((self.x == np.round(x,5)) & (self.y == np.round(y,5)))
+        cB  = np.sqrt(self.Bx[mg_idx]**2 + self.By[mg_idx]**2)
+        self.past = cB
 
 
     def addCamera(self,camera):
@@ -67,29 +77,31 @@ class positionScaling(QThread):
         """
         Receive coordinates from Camera
         """
-
         if self.i == 10:
-            x2 = data[1]*self.m
-            x1 = data[0]*self.m
-            y2 = (1536 - data[3])*self.m
-            y1 = (1536 - data[2])*self.m
-            self.findPoint((x1+x2)/2,(y1+y2)/2)
+            x2 = data[1]
+            x1 = data[0]
+            y2 = (1536 - data[3])
+            y1 = (1536 - data[2])
+
+            self.findPoint((x1+x2)/2*self.m,(y1+y2)/2*self.m)
             self.i = 0
         else:
             self.i += 1
+        
 
     def findPoint(self,x,y):
         y = np.abs(y - self.symmetry_point)
 
-        mg_idx = np.where((self.df["x"].values == np.round(x,5)) & (self.df["y"].values == np.round(y,5)))
-        cB  = np.sqrt(self.df["x"].values[mg_idx]**2 + self.df["y"].values[mg_idx]**2)
-        
+        mg_idx = np.where((self.x == np.round(x,5)) & (self.y == np.round(y,5)))
+        cB  = np.sqrt(self.Bx[mg_idx]**2 + self.By[mg_idx]**2)
+        error = cB-self.past
+
         if self.past == 0:
             self.emitData(1)
             self.past = cB
         else:
-            error = cB-self.past
             self.past = cB
+            print("Coords", x,y, "\nError", error)
             self.emitData(error)
     
     def emitData(self, data):
