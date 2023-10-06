@@ -264,7 +264,7 @@ class baslerCam(QThread, Thread):
         out = cv2.VideoWriter(out_name, cv2.VideoWriter_fourcc(*'MJPG'), int(self.FrameRate), (int(self.width),int(self.height)))
         """
         
-        out_name = os.path.join(self.path,'measurement_{}.avi'.format(datetime.date.today()))
+        out_name = os.path.join(self.path,'measurement_{}.mp4'.format(datetime.date.today()))
 
         out_process = ( 
             ffmpeg 
