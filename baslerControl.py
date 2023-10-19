@@ -31,6 +31,7 @@ class baslerCam(QThread, Event):
  
     def __init__(self, event, args):
         super().__init__()
+        
         self.args = args
         self.path = args.path
 
@@ -181,6 +182,13 @@ class baslerCam(QThread, Event):
         self.print_str.emit(self.list_properties())
 
 
+        if self.saveFlag:
+            
+            q = mp.Queue()
+            save_event = mp.Event()
+
+            save_thread = Thread(target= self.camera_saving, args=(save_event, q, self.path))
+            save_thread.start()
 
         #Timed snaps and put to que
         self.cam.StartGrabbingMax(self.frameCount)
@@ -202,7 +210,7 @@ class baslerCam(QThread, Event):
                     self.emitPosition(coords)
 
                 if self.saveFlag:
-                    self.saving_que.put(self.frame)
+                    q.put(self.frame)
 
                 #Viz every 5th
                 if i%10 == 0:
@@ -219,20 +227,18 @@ class baslerCam(QThread, Event):
                 grab.Release()
 
         
-        if self.saveFlag:
-            save_event = Event()
-            self.save_thread = Thread(target=self.camera_saving, args=(save_event,))
-            self.save_thread.start()
-        
         
         if self.saveFlag:
+
             self.print_str.emit("Wait until saved")
             save_event.set()
+
             np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(datetime.date.today())),self.timeStamp)
+
             if self.trackFlag:
                 self.trackerTool.saveData(self.path)
 
-            self.save_thread.join()
+            save_thread.join()
             save_event.clear()
 
         self.print_str.emit("Camera task done!")
@@ -271,13 +277,13 @@ class baslerCam(QThread, Event):
             pickle.dump(person, fp)
             self.print_str.emit('dictionary saved successfully to file')
 
-    def camera_saving(self, event_saver):
+    def camera_saving(self, event_saver, q, path):
 
         """
         out = cv2.VideoWriter(out_name, cv2.VideoWriter_fourcc(*'MJPG'), int(self.FrameRate), (int(self.width),int(self.height)))
         """
         
-        out_name = os.path.join(self.path,'measurement_{}.mp4'.format(datetime.date.today()))
+        out_name = os.path.join(path,'measurement_{}.mp4'.format(datetime.date.today()))
 
         out_process = ( 
         ffmpeg 
@@ -288,8 +294,8 @@ class baslerCam(QThread, Event):
         )
 
         while True:
-            if (self.saving_que.empty() == False):
-                frame = self.saving_que.get()
+            if (q.empty() == False):
+                frame = q.get()
                 frame = np.stack((frame.astype("uint8"),frame.astype("uint8"),frame.astype("uint8")), axis = -1)
                 out_process.stdin.write( frame.tobytes() )
                 #out.write(frame)
@@ -303,6 +309,7 @@ class baslerCam(QThread, Event):
         #out.release()
         out_process.stdin.close()
         out_process.wait()
+
         return 1
 
     def close(self):
