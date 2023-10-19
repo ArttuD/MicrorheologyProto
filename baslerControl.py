@@ -15,12 +15,14 @@ import datetime
 from tools.tracker import tracker
 from queue import Queue
 
+import multiprocessing as mp
+
 from threading import Event, Thread
 
 import ffmpeg
 
 
-class baslerCam(QThread, Thread):
+class baslerCam(QThread, Event):
 
     changePixmap = pyqtSignal(QImage)
     position = pyqtSignal(object)
@@ -35,7 +37,7 @@ class baslerCam(QThread, Thread):
         self.event = event
 
         #flags
-        self.saving_que = Queue(maxsize=300)
+        self.saving_que = Queue(maxsize=5000)
         self.trackFlag = False
         self.modelFlag = False
         self.saveFlag = False
@@ -99,7 +101,7 @@ class baslerCam(QThread, Thread):
         Stream video until kill command
         """
         self.print_str.emit("Live streaming")
-        self.print_str(self.print_str)
+        self.print_str.emit(self.list_properties())
         self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly) #return the last frame
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
@@ -125,7 +127,7 @@ class baslerCam(QThread, Thread):
         Snap one image
         """
         self.print_str.emit("Image snapped")
-        self.print_str(self.print_str)
+        self.print_str.emit(self.list_properties())
         with self.cam.GrabOne(1000) as res:
             image = self.converter.Convert(res)
             self.frame = image.GetArray()
@@ -176,12 +178,9 @@ class baslerCam(QThread, Thread):
         """
         Record predefined number of frames
         """
-        self.print_str(self.print_str)
+        self.print_str.emit(self.list_properties())
 
-        if self.saveFlag:
-            save_event = Event()
-            self.save_thread = Thread(target=self.camera_saving, args=(save_event,))
-            self.save_thread.start()
+
 
         #Timed snaps and put to que
         self.cam.StartGrabbingMax(self.frameCount)
@@ -218,6 +217,12 @@ class baslerCam(QThread, Thread):
                 self.cam.StopGrabbing()
                 #_ = self.finishBuffer(i)
                 grab.Release()
+
+        
+        if self.saveFlag:
+            save_event = Event()
+            self.save_thread = Thread(target=self.camera_saving, args=(save_event,))
+            self.save_thread.start()
         
         
         if self.saveFlag:
@@ -275,7 +280,7 @@ class baslerCam(QThread, Thread):
         out_name = os.path.join(self.path,'measurement_{}.mp4'.format(datetime.date.today()))
 
         out_process = ( 
-            ffmpeg 
+        ffmpeg 
         .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'
         .format(self.width, self.height)) 
         .output(out_name, pix_fmt='yuv420p') .overwrite_output() 
@@ -286,7 +291,7 @@ class baslerCam(QThread, Thread):
             if (self.saving_que.empty() == False):
                 frame = self.saving_que.get()
                 frame = np.stack((frame.astype("uint8"),frame.astype("uint8"),frame.astype("uint8")), axis = -1)
-                out_process.stdin.write( img.tobytes() )
+                out_process.stdin.write( frame.tobytes() )
                 #out.write(frame)
             else:
                 if not event_saver.is_set():

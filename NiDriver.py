@@ -7,15 +7,17 @@ import time
 import datetime
 import numpy as np
 import os
-import threading
+#import multiprocessing as mp
+#from multiprocessing import Event
+from threading import Event, Thread
 from queue import Queue
 
 from tools.tools import *
 
-from threading import Event
 
 
 class niDevice(QThread, Event):
+
     setData = pyqtSignal(object)
     print_str = pyqtSignal(str) #self.print_str.emit
 
@@ -38,7 +40,7 @@ class niDevice(QThread, Event):
         #parse arguments
         self.totalTime = args.time
         self.root = args.path
-        self.resistance1 = args.FirstResis 
+        self.resistance1 = self.args.FirstResis 
         self.buffer_size = round(args.buffer_size_cfg)
         self.samplingFreq = args.samplingFreq
         self.chans_in = args.chans_in
@@ -234,6 +236,7 @@ class niDevice(QThread, Event):
                 #Emit Qt
                 if QueIndex%10 == 0:
                     self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
+                    #print(self.s)
                     self.setData.emit(self.s)
 
                 if self.modelFlag:
@@ -294,6 +297,7 @@ class niDevice(QThread, Event):
                 #Emit to Qt
                 if QueIndex%10 == 0:
                     self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
+                    #print(self.s)
                     self.setData.emit(self.s)
 
                 QueIndex += 1
@@ -400,7 +404,7 @@ class niDevice(QThread, Event):
         self.NSamples = np.inf #Continue until stopped
         self.initTasks()
 
-        self.threadProcess = threading.Thread(target = self.processTune)
+        self.threadProcess =  Thread(target = self.processTune)
         
         #self.#calibrateMgSensor(=() #calibrate the Mg sensor
         
@@ -428,7 +432,7 @@ class niDevice(QThread, Event):
         
         self.initTasks()
 
-        self.threadProcess = threading.Thread(target = self.process)
+        self.threadProcess =  Thread(target = self.process)
         #self.calibrateMgSensor() #calibrate the Mg sensor 
 
         self.NiAlReader.start() #start reading
@@ -453,7 +457,7 @@ class niDevice(QThread, Event):
 
         self.initTasks()
 
-        self.threadProcess = threading.Thread(target = self.processAutoTune)
+        self.threadProcess =  Thread(target = self.processAutoTune)
         #self.calibrateMgSensor() #calibrate the Mg sensor
 
         self.NiAlReader.start() #start reading 

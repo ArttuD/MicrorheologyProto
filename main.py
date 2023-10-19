@@ -24,7 +24,7 @@ else:
 
 
 parser = argparse.ArgumentParser(description='Microrheology test setup.')
-parser.add_argument('--path', '-p', required = False, type = str, default = r'F:\test', help='Save path for all the files, creates folder etc')
+parser.add_argument('--path', '-p', required = False, type = str, default = r'.\test', help='Save path for all the files, creates folder etc')
 parser.add_argument("--user", "-u", required=False, default = "DEFAULT",
                     help = "buffer size for sampling")
 parser.add_argument("--buffer_size_cfg", "-b", required=False, default = None,
@@ -68,7 +68,7 @@ isExist = os.path.exists(args.path)
 if not isExist:
    # Create a new directory because it does not exist
    os.makedirs(args.path)
-   print("The new directory is created: ", args.path )
+   #print("The new directory is created: ", args.path )
 
 #launch graph
 

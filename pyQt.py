@@ -8,8 +8,11 @@ import pyqtgraph as pg
 import sys
 import numpy as np
 import cv2
+import multiprocessing as mp
+#from multiprocessing import Event
+from threading import Event, Thread
+
 import time
-import threading
 import os
 from queue import Queue
 
@@ -26,8 +29,8 @@ class App(QWidget):
         self.args = args
         self.logs = logs
 
-        self.event_cam = threading.Event()
-        self.event_NI = threading.Event()
+        self.event_cam = Event()
+        self.event_NI = Event()
 
         #UI geometry
         self.left = 0; self.top = 0
@@ -318,7 +321,7 @@ class App(QWidget):
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
         self.sliderR1.setRange(0,100)
-        self.sliderR1.setValue(self.args.FirstResis)
+        self.sliderR1.setValue(int(self.args.FirstResis*100))
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
         self.sliderR1.setTickPosition(QSlider.TickPosition.TicksRight)
@@ -422,7 +425,7 @@ class App(QWidget):
         self.liveFlag = True
         self.streamBtn.setStyleSheet("background-color : white")
         
-        self.cameraThread = threading.Thread(target=self.cam.livestream)
+        self.cameraThread =  Thread(target=self.cam.livestream)
         self.cameraThread.start()
 
     def snapImage(self):
@@ -435,7 +438,7 @@ class App(QWidget):
         #snap image
         self.snapFlag = True
         self.snapbtn.setStyleSheet("background-color : white")
-        self.snapThread = threading.Thread(target=self.cam.snapImage)
+        self.snapThread =  Thread(target=self.cam.snapImage)
         self.snapThread.start()
         self.snapThread.join()
 
@@ -457,13 +460,13 @@ class App(QWidget):
         if self.calibFlag:
             self.logs.info("Autotune")
             self.printLabel.setText("Calibrating Hall Sensor to the input current...")
-            self.xTune = threading.Thread(target=self.driver.autoTune)
+            self.xTune =  Thread(target=self.driver.autoTune)
             self.xTune.start()
             self.tuneFlag = True
         else:
             self.logs.info("Manul input")
             self.printLabel.setText("Manual current manipulation")
-            self.xTune = threading.Thread(target=self.driver.tune)
+            self.xTune =  Thread(target=self.driver.tune)
             self.xTune.start()
             self.tuneFlag = True
 
@@ -497,7 +500,7 @@ class App(QWidget):
             self.cam.finalboundaries = self.boundaryFinal
             self.cam.initTracker()
 
-            self.logs("Cropped image from {self.boundaryFinal}")
+            self.logs.info("Cropped image from {self.boundaryFinal}")
             if self.modelFlag:
                 self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
@@ -548,10 +551,10 @@ class App(QWidget):
         self.cam.path = self.textField.toPlainText()
         self.driver.root = self.textField.toPlainText()
 
-        self.driverThread = threading.Thread(target=self.driver.start)
+        self.driverThread =  Thread(target=self.driver.start)
         self.driverThread.start()
         
-        self.cameraThread = threading.Thread(target=self.cam.recordMeasurement)
+        self.cameraThread =  Thread(target=self.cam.recordMeasurement)
         self.cameraThread.start()
         
         self.btnStart.setStyleSheet("background-color : white")
@@ -561,7 +564,7 @@ class App(QWidget):
         """
         Stop tuning, measurement or camera stream and reset Gui
         """
-        self.logs("Stopping the previous event")
+        self.logs.info("Stopping the previous event")
         self.btnStop.setStyleSheet("background-color : white")
 
         if self.tuneFlag:
