@@ -84,6 +84,10 @@ class baslerCam(QThread, Thread):
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
         
+    def list_properties(self):
+        self.properties = "Width {}, height {}, exposure {}, fps {}, gain {}, and frame count {}".format(self.width, self.height ,self.exposureTime ,self.FrameRate,self.gain,self.frameCount)
+
+
     def setROI(self,width,height):
         self.width = width
         self.height = height
@@ -95,6 +99,7 @@ class baslerCam(QThread, Thread):
         Stream video until kill command
         """
         self.print_str.emit("Live streaming")
+        self.print_str(self.print_str)
         self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly) #return the last frame
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
@@ -115,11 +120,12 @@ class baslerCam(QThread, Thread):
     def print_info(self):
         self.print_str.emit("Camera set-up\nMono8 colortype \n{} fps".format( self.frameCount, self.FrameRate))
 
-
     def snapImage(self):
         """
         Snap one image
         """
+        self.print_str.emit("Image snapped")
+        self.print_str(self.print_str)
         with self.cam.GrabOne(1000) as res:
             image = self.converter.Convert(res)
             self.frame = image.GetArray()
@@ -170,6 +176,8 @@ class baslerCam(QThread, Thread):
         """
         Record predefined number of frames
         """
+        self.print_str(self.print_str)
+
         if self.saveFlag:
             save_event = Event()
             self.save_thread = Thread(target=self.camera_saving, args=(save_event,))

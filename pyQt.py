@@ -20,10 +20,11 @@ from Modeling import positionScaling
 
 class App(QWidget):
 
-    def __init__(self, args):
+    def __init__(self, args, logs):
         super().__init__()
 
         self.args = args
+        self.logs = logs
 
         self.event_cam = threading.Event()
         self.event_NI = threading.Event()
@@ -317,7 +318,7 @@ class App(QWidget):
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
         self.sliderR1.setRange(0,100)
-        self.sliderR1.setValue(27)
+        self.sliderR1.setValue(self.args.FirstResis)
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
         self.sliderR1.setTickPosition(QSlider.TickPosition.TicksRight)
@@ -416,6 +417,8 @@ class App(QWidget):
         Start camera stream
         *** No problems
         """
+        self.logs.info("Starting Live")
+
         self.liveFlag = True
         self.streamBtn.setStyleSheet("background-color : white")
         
@@ -427,6 +430,8 @@ class App(QWidget):
         Snap image to initiate tracker
         *** No problems
         """
+
+        self.logs.info("Snapped Image")
         #snap image
         self.snapFlag = True
         self.snapbtn.setStyleSheet("background-color : white")
@@ -443,17 +448,20 @@ class App(QWidget):
         ***Problems
         * Autotune, not tested!
         """
+        
         self.createAndCheckFolder(self.textField.toPlainText())
         self.driver.root = self.textField.toPlainText()
 
         self.CalibBtn.setStyleSheet("background-color : white")
         
         if self.calibFlag:
-            self.printLabel.setText("calibrating Mg sensor...")
+            self.logs.info("Autotune")
+            self.printLabel.setText("Calibrating Hall Sensor to the input current...")
             self.xTune = threading.Thread(target=self.driver.autoTune)
             self.xTune.start()
             self.tuneFlag = True
         else:
+            self.logs.info("Manul input")
             self.printLabel.setText("Manual current manipulation")
             self.xTune = threading.Thread(target=self.driver.tune)
             self.xTune.start()
@@ -489,12 +497,14 @@ class App(QWidget):
             self.cam.finalboundaries = self.boundaryFinal
             self.cam.initTracker()
 
+            self.logs("Cropped image from {self.boundaryFinal}")
             if self.modelFlag:
                 self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
             self.snapbtn.setStyleSheet("background-color : green")
             self.snapFlag = False
             self.boundaryFinal = []
+            self.clicks = 0
 
     def drawRectangle(self,canvas):
         """
@@ -528,6 +538,8 @@ class App(QWidget):
             -Fetch path
             -start current driver and camera
         """
+        self.logs.info("Starting measurements")
+
         self.printLabel.setText("Measurement started")
         self.MeasFlag = True
         self.snapbtn.setStyleSheet("background-color : blue")
@@ -549,6 +561,7 @@ class App(QWidget):
         """
         Stop tuning, measurement or camera stream and reset Gui
         """
+        self.logs("Stopping the previous event")
         self.btnStop.setStyleSheet("background-color : white")
 
         if self.tuneFlag:
@@ -604,6 +617,7 @@ class App(QWidget):
         #clean
         self.initData()
         self.cleanplots()
+
         self.boundaryFinal = [] 
 
         #reset
@@ -615,6 +629,7 @@ class App(QWidget):
         """
         Close all
         """
+        self.logs.info("Closing")
         self.printLabel.setText("Shutting down")
         self.cam.close()
         exit(0)
@@ -696,6 +711,7 @@ class App(QWidget):
         Driver Communication channel
         """
         self.printLabel.setText(data_str)
+        self.logs.info("NI dirver: {data_str}")
 
     @pyqtSlot(str)
     def receive_cam_str(self,data_str):
@@ -704,10 +720,13 @@ class App(QWidget):
         """
         self.printLabel.setText(data_str)
 
+        self.logs.info("NI dirver: {data_str}")
+        
 
-def pymain(args):
+
+def pymain(args, logs):
     app = QtWidgets.QApplication(sys.argv)
-    w = App(args)
+    w = App(args, logs)
     sys.exit(app.exec())
 
 if __name__ == "__main__":

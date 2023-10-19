@@ -53,15 +53,23 @@ class niDevice(QThread, Event):
 
         self.readerStreamIn = None
         self.currentToWrite = 0
-        self.MgOffset = None
         self.cutOFF = None
         
-        self.Mgcoef = 1.49814091 #0.73742302 #valid only 1A
-        self.scaler = 0.0
+        self.Mgcoef = 15 #Convert 
+        self.MgOffset = 2.5
+
+        self.T2i_coef =  1.49814091
+
+        self.model_coef = args.conversionFactor #Convert 
+        self.scaler =  0.0
         self.sequence = None
         self.iteration = 0
 
         self.model = None
+        self.properties = None
+
+    def list_properties(self):
+        self.properties = "Saving to {}. Running with Hall B slope: {}, offset {}, B2i conversion {}, Resistance {}, and model scaling {}".format( self.root, self.Mgcoef, self.MgOffset, self.T2i_coef, self.resistance1, self.model_coef)
 
     def addModel(self,model):
         self.modelFlag = True
@@ -153,36 +161,6 @@ class niDevice(QThread, Event):
             self.NiAlReader.stop()
             
         return 0
-    
-    def calibrateMgSensor(self):
-        """
-        Find Mg sensor baseline
-        """
-        Nsamples = 250
-        
-        #Create and close task
-        calibR = nidaqmx.Task()
-        calibR.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE, min_val = 0, max_val=5)  # has to match with chans_in
-        datastream = AnalogSingleChannelReader(calibR.in_stream)
-        calibR.start()
-
-        dataBuffer = np.zeros(Nsamples)
-        self.print_str.emit("Calibrating Mg Sensor")
-        for i in range(Nsamples):
-            dataBuffer[i] = datastream.read_one_sample()
-            time.sleep(0.0001)
-        
-        calibR.stop()
-
-        self.MgOffset = np.abs(np.mean(dataBuffer))
-
-        self.print_str.emit("done sampling, Offset: {}".format(self.MgOffset))
-        
-        dataBuffer = np.empty(1)
-        calibR.close()
-        calibR = None
-
-        return 1
 
     def searchwriter(self):
         if self.writeQue.empty():
@@ -219,13 +197,13 @@ class niDevice(QThread, Event):
         """
         measured = self.que.get()
         #print(measured, self.scaler)
-        measured[0] = 2*measured[0]-self.scaler
-        measured[1] = measured[1]-self.MgOffset
+        measured[0] = 2*measured[0]
+        measured[1] = (measured[1]-self.MgOffset)/self.Mgcoef
         if self.feedBackFlag:
-            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]*self.Mgcoef*self.resistance1]), writeC*self.resistance1)
+            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
             data = kalmanOut
         else:
-            data = writeC*self.resistance1
+            data = (writeC-self.scaler)*self.resistance1
         
         return measured,data
 
@@ -238,6 +216,7 @@ class niDevice(QThread, Event):
         """
         Pipe measurement
         """
+
         self.NiAlWriter.start()
         self.write_empty()
         
@@ -247,15 +226,14 @@ class niDevice(QThread, Event):
             if (self.que.empty() == False) & (QueIndex < self.NSamples):
                 
                 #fetch from que
-                measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
-                measured[1] = np.abs(measured[1])
+                measured, data = self.fetchQue(QueIndex, self.sequence[QueIndex])
 
                 #data =  self.sequence[QueIndex]
                 data = self.checkLimits(data)
                 
                 #Emit Qt
                 if QueIndex%10 == 0:
-                    self.s  = np.array([QueIndex, self.sequence[QueIndex],  measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
+                    self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
                     self.setData.emit(self.s)
 
                 if self.modelFlag:
@@ -289,9 +267,12 @@ class niDevice(QThread, Event):
 
 
     def processTune(self):
+
         """
         Tuning measurement
         """
+
+        
         self.NiAlWriter.start()
         self.write_empty()
 
@@ -304,7 +285,7 @@ class niDevice(QThread, Event):
                 self.resistance1 = self.searchResOne()
 
                 measured,data = self.fetchQue(QueIndex, self.currentToWrite)
-                measured[1] = np.abs(measured[1])
+
                 data = self.checkLimits(data)
                 
                 #write
@@ -340,6 +321,7 @@ class niDevice(QThread, Event):
 
                 #fetch
                 measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
+
                 data = self.checkLimits(data)
 
                 #write
@@ -355,7 +337,6 @@ class niDevice(QThread, Event):
                 self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
                 self.NpyStorage[3,QueIndex] = measured[1]
                 self.NpyStorage[4,QueIndex] = self.scaler
-
                 QueIndex += 1
             else:
                 if (self.event.is_set() == False) & (QueIndex < self.NSamples):
@@ -364,11 +345,13 @@ class niDevice(QThread, Event):
                     break
 
         self.write_empty()
+        
         self.NiAlWriter.stop()
 
         np.save(os.path.join(self.root,"calib_{}.npy".format(datetime.date.today())), self.NpyStorage)
 
         self.fitCalibration()
+
         self.totalTime = self.args.time
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
 
@@ -376,23 +359,24 @@ class niDevice(QThread, Event):
             
 
     def fitCalibration(self):
+
         maxIndex = np.where(self.NpyStorage[2,:] >=0.5)[0][0]
+
         x = self.NpyStorage[2,self.cutOFF:maxIndex]
-        x = x-x[0]
-        x = x[:,np.newaxis]
         y = self.NpyStorage[3,self.cutOFF:maxIndex]
-        y = y-y[0]
-        k, _, _, _  = np.linalg.lstsq(x,y, rcond=None)
+
+        k, b= np.polyfit(x,y,1)
         
-        self.print_str.emit("New conversion factor: ", 1/np.abs(k))
+        self.print_str.emit("New conversion factor: ", k)
         
         self.Mgcoef = 1/float(k[0])
 
         plt.scatter(x,y, label = "data", color = "red", alpha= 0.4)
-        plt.plot(x, k*x, label = "fit", color = "blue")
+        plt.plot(x, k*x +b, label = "fit", color = "blue")
         plt.legend()
         plt.savefig(os.path.join(self.root,'calib_{}.png'.format(datetime.date.today())))   # save the figure to file
-        plt.close() 
+        plt.close()
+        self.print_str.logs("fit results:  k - {}, b - {}".format(k, b))
 
     def initTasks(self):
         """
@@ -411,13 +395,14 @@ class niDevice(QThread, Event):
         Manual tune source and ref. resistance
         """
         
+        self.print_str.emit(self.list_properties())
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
         self.NSamples = np.inf #Continue until stopped
         self.initTasks()
 
         self.threadProcess = threading.Thread(target = self.processTune)
         
-        self.calibrateMgSensor() #calibrate the Mg sensor
+        #self.#calibrateMgSensor(=() #calibrate the Mg sensor
         
         self.NiAlReader.start() #start reading 
         self.threadProcess.start() #start writer
@@ -433,6 +418,7 @@ class niDevice(QThread, Event):
         """
         Measurement
         """
+        self.print_str.emit(self.list_properties())
         
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq = self.FreqRet)
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
@@ -443,7 +429,7 @@ class niDevice(QThread, Event):
         self.initTasks()
 
         self.threadProcess = threading.Thread(target = self.process)
-        self.calibrateMgSensor() #calibrate the Mg sensor 
+        #self.calibrateMgSensor() #calibrate the Mg sensor 
 
         self.NiAlReader.start() #start reading
         self.threadProcess.start() #turn on voltage source and wait kill command
@@ -457,16 +443,18 @@ class niDevice(QThread, Event):
         """
         Manual tune source and ref. resistance with linear sequence
         """
+        self.print_str.emit(self.list_properties())
 
         self.totalTime = 60
         self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
         
         self.generateSlope()
+
         self.initTasks()
 
         self.threadProcess = threading.Thread(target = self.processAutoTune)
-        self.calibrateMgSensor() #calibrate the Mg sensor
+        #self.calibrateMgSensor() #calibrate the Mg sensor
 
         self.NiAlReader.start() #start reading 
         self.threadProcess.start() #turn on voltage source and wait kill command
@@ -480,7 +468,7 @@ class niDevice(QThread, Event):
         with self.modelScaler.mutex:
             self.modelScaler.queue.clear()
 
-        scaler = 1/self.Mgcoef*data
+        scaler = 1/self.model_coef*data
         self.modelScaler.put(scaler)
 
     def generateStepWave(self):
@@ -522,3 +510,34 @@ class niDevice(QThread, Event):
         #self.sequence[-1] = 0
 
 
+"""
+    
+    def calibrateMgSensor(self):
+
+        Find Mg sensor baseline
+        Nsamples = 250
+        
+        #Create and close task
+        calibR = nidaqmx.Task()
+        calibR.ai_channels.add_ai_voltage_chan("Dev1/ai1", terminal_config = nidaqmx.constants.TerminalConfiguration.RSE, min_val = 0, max_val=5)  # has to match with chans_in
+        datastream = AnalogSingleChannelReader(calibR.in_stream)
+        calibR.start()
+
+        dataBuffer = np.zeros(Nsamples)
+        self.print_str.emit("Calibrating Mg Sensor")
+        for i in range(Nsamples):
+            dataBuffer[i] = datastream.read_one_sample()
+            time.sleep(0.0001)
+        
+        calibR.stop()
+
+        self.MgOffset = np.abs(np.mean(dataBuffer))
+
+        self.print_str.emit("done sampling, Offset: {}".format(self.MgOffset))
+        
+        dataBuffer = np.empty(1)
+        calibR.close()
+        calibR = None
+
+        return 1
+"""
