@@ -192,7 +192,7 @@ class App(QWidget):
         self.plotB.setLabel("bottom", "Time [s]", **self.styles)
         self.plotB.showGrid(x=True, y=True)
         self.plotB.setXRange(0, 10, padding=0, update = False)
-        self.plotB.setYRange(-0.2, 1.5, padding=0, update = False)
+        self.plotB.setYRange(-0.01, 0.15, padding=0, update = False)
 
         #Tracking plot
         self.TrackLine = self.plotTrack.plot(x=self.trackX, y=self.trackY, pen=pg.mkPen(color="green"), symbol='t', symbolSize=10, row = 0, col = 0, name = "Track")
@@ -491,23 +491,26 @@ class App(QWidget):
             self.clicks += 1
         
         if self.clicks == 2:
-            self.clicks = 0
+
             self.x1 = self.boundaryFinal[0][0][0] 
             self.x2 = self.boundaryFinal[1][0][0] 
             self.y1 = self.boundaryFinal[0][0][1]
             self.y2 = self.boundaryFinal[1][0][1]
             self.drawRectangle(self.label.pixmap())
-            self.cam.finalboundaries = self.boundaryFinal
-            self.cam.initTracker()
+            if self.trackFlag:
+                self.cam.finalboundaries = self.boundaryFinal
+                self.cam.initTracker()
 
             self.logs.info("Cropped image from {self.boundaryFinal}")
             if self.modelFlag:
                 self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
-            self.snapbtn.setStyleSheet("background-color : green")
+            
             self.snapFlag = False
             self.boundaryFinal = []
             self.clicks = 0
+            self.snapbtn.setStyleSheet("background-color : green")
+            #self.clicks = 0
 
     def drawRectangle(self,canvas):
         """

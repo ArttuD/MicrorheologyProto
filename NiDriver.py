@@ -57,10 +57,10 @@ class niDevice(QThread, Event):
         self.currentToWrite = 0
         self.cutOFF = None
         
-        self.Mgcoef = 15 #Convert 
+        self.Mgcoef =  15 #Convert 
         self.MgOffset = 2.5
 
-        self.T2i_coef =  1.49814091
+        self.T2i_coef = 0.071565487
 
         self.model_coef = args.conversionFactor #Convert 
         self.scaler =  0.0
@@ -371,16 +371,16 @@ class niDevice(QThread, Event):
 
         k, b= np.polyfit(x,y,1)
         
-        self.print_str.emit("New conversion factor: ", k)
+        self.print_str.emit("New conversion factor: {}".format(k))
         
-        self.Mgcoef = 1/float(k[0])
+        self.T2i_coef = 1/float(k)
 
         plt.scatter(x,y, label = "data", color = "red", alpha= 0.4)
         plt.plot(x, k*x +b, label = "fit", color = "blue")
         plt.legend()
         plt.savefig(os.path.join(self.root,'calib_{}.png'.format(datetime.date.today())))   # save the figure to file
         plt.close()
-        self.print_str.logs("fit results:  k - {}, b - {}".format(k, b))
+        self.print_str.emit("fit results:  k: {}, b: {}".format(k, b))
 
     def initTasks(self):
         """

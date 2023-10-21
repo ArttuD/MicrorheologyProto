@@ -38,7 +38,7 @@ class baslerCam(QThread, Event):
         self.event = event
 
         #flags
-        self.saving_que = Queue(maxsize=5000)
+        self.saving_que = Queue(maxsize=500)
         self.trackFlag = False
         self.modelFlag = False
         self.saveFlag = False
