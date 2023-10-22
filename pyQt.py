@@ -433,16 +433,15 @@ class App(QWidget):
         Snap image to initiate tracker
         *** No problems
         """
-
+        self.reset_frames():
+        self.snapbtn.setStyleSheet("background-color : white")
         self.logs.info("Snapped Image")
         #snap image
         self.snapFlag = True
-        self.snapbtn.setStyleSheet("background-color : white")
         self.snapThread =  Thread(target=self.cam.snapImage)
         self.snapThread.start()
         self.snapThread.join()
 
-        self.snapbtn.setStyleSheet("background-color : green")
 
     def calibrate(self):
         """
@@ -480,6 +479,15 @@ class App(QWidget):
         self.sliderR1Label.setText(f'Resistance 1 value: {value/100}')
         self.driver.changeWritingRes(value/100)
 
+    def reset_frames(self):
+
+        self.set_black_screen()
+        self.cam.trackerTool = None
+        self.cam.finalboundaries = None
+        self.boundaryFinal = []
+
+
+
     def getPos(self, click):
         """
         After snapping an image, 2 clicks to draw rectangle for tracker
@@ -497,19 +505,20 @@ class App(QWidget):
             self.y1 = self.boundaryFinal[0][0][1]
             self.y2 = self.boundaryFinal[1][0][1]
             self.drawRectangle(self.label.pixmap())
+
             if self.trackFlag:
                 self.cam.finalboundaries = self.boundaryFinal
                 self.cam.initTracker()
 
             self.logs.info("Cropped image from {self.boundaryFinal}")
+            
             if self.modelFlag:
                 self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
-            
             self.snapFlag = False
             self.boundaryFinal = []
             self.clicks = 0
-            self.snapbtn.setStyleSheet("background-color : green")
+            self.snapbtn.setStyleSheet("background-color : blue")
             #self.clicks = 0
 
     def drawRectangle(self,canvas):
@@ -629,6 +638,8 @@ class App(QWidget):
         #reset
         self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
         self.btnStop.setStyleSheet("background-color : red")
+
+        self.reset_frames()
         self.printLabel.setText("Ready to rock!!")
     
     def shutDown(self):

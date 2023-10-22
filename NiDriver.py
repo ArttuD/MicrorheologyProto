@@ -125,7 +125,7 @@ class niDevice(QThread, Event):
 
     def updateScaler(self):
         if self.modelScaler.empty() == False:
-            self.scaler = self.modelScaler.get()
+            self.scaler = self.modelScaler.get()/self.T2i_coef
     
     def cfg_AO_writer_task(self):
         #Config analog output channel between -10 and 10V
