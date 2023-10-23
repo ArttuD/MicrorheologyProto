@@ -182,7 +182,7 @@ class baslerCam(QThread, Event):
         self.print_str.emit(self.list_properties())
 
 
-        if self.saveFlag:
+        if (self.saveFlag) & (self.trackFlag == False) :
             
             q = mp.Queue()
             save_event = mp.Event()
@@ -209,7 +209,7 @@ class baslerCam(QThread, Event):
                     #Emit coordinates
                     self.emitPosition(coords)
 
-                if self.saveFlag:
+                if (self.saveFlag) & (self.trackFlag == False):
                     q.put(self.frame)
 
                 #Viz every 5th
@@ -228,18 +228,19 @@ class baslerCam(QThread, Event):
 
         
         
-        if self.saveFlag:
+        if (self.saveFlag)& (self.trackFlag == False):
 
             self.print_str.emit("Wait until saved")
             save_event.set()
 
             np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(datetime.date.today())),self.timeStamp)
-
-            if self.trackFlag:
-                self.trackerTool.saveData(self.path)
-
             save_thread.join()
             save_event.clear()
+
+        if self.trackFlag:
+            self.trackerTool.saveData(self.path)
+
+
 
         self.print_str.emit("Camera task done!")
 

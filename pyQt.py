@@ -433,7 +433,7 @@ class App(QWidget):
         Snap image to initiate tracker
         *** No problems
         """
-        self.reset_frames():
+        self.reset_frames()
         self.snapbtn.setStyleSheet("background-color : white")
         self.logs.info("Snapped Image")
         #snap image
