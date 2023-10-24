@@ -62,7 +62,7 @@ class niDevice(QThread, Event):
 
         self.T2i_coef = 0.071565487
 
-        self.model_coef = args.conversionFactor #Convert 
+        self.model_coef = self.T2i_coef # args.conversionFactor #Convert 
         self.scaler =  0.0
         self.sequence = None
         self.iteration = 0
@@ -126,6 +126,7 @@ class niDevice(QThread, Event):
     def updateScaler(self):
         if self.modelScaler.empty() == False:
             self.scaler = self.modelScaler.get()/self.T2i_coef
+            #print("scaler:", self.scaler)
     
     def cfg_AO_writer_task(self):
         #Config analog output channel between -10 and 10V
