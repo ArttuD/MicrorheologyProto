@@ -203,6 +203,7 @@ class niDevice(QThread, Event):
         measured[0] = 2*measured[0]
         measured[1] = (measured[1]-self.MgOffset)/self.Mgcoef
         if self.feedBackFlag:
+            #print(measured[1]/self.T2i_coef*self.resistance1, measured[1]/self.T2i_coef, measured[1], writeC)
             kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
             data = kalmanOut
         else:
@@ -374,7 +375,7 @@ class niDevice(QThread, Event):
         
         self.print_str.emit("New conversion factor: {}".format(k))
         
-        self.T2i_coef = 1/float(k)
+        self.T2i_coef = float(k)
 
         plt.scatter(x,y, label = "data", color = "red", alpha= 0.4)
         plt.plot(x, k*x +b, label = "fit", color = "blue")
@@ -429,7 +430,7 @@ class niDevice(QThread, Event):
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
 
         self.generateStepWave()
-        #self.generateSlope()
+        #self.SinWave()
         
         self.initTasks()
 
@@ -510,8 +511,8 @@ class niDevice(QThread, Event):
         grad = 0.5
         freq = 0.05
 
-        self.sequence[:10000] = offset
-        self.sequence[10000:40000] = offset + grad*np.sin(2*np.pi*freq*np.arange(30000)*(1/1000))
+        self.sequence[:1000] = offset
+        self.sequence[1000:4000] = offset + grad*np.sin(2*np.pi*freq*np.arange(3000)*(1/100))
         #self.sequence[-1] = 0
 
 

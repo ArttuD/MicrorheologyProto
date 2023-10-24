@@ -37,7 +37,7 @@ class PIDcontroller():
     def __init__(self, freq):
         #print("Created Current controller")
         self.kp = 20#25
-        self.ki = 300 #30
+        self.ki = 290 #30
         self.kd = 0.00002 #0.075
         self.integral = 0
         self.past=0
@@ -68,9 +68,9 @@ class PIDMGcontroller():
     
     def __init__(self,freq):
         print("Created MG controller")
-        self.kp = 20
-        self.ki = 350
-        self.kd = 0.0000005
+        self.kp = 21
+        self.ki = 600
+        self.kd = 0.0000007
 
         self.integral = 0
         self.past=0

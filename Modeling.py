@@ -86,7 +86,7 @@ class positionScaling(QThread):
         current = self.B[x_idx, y_idx]
         error = self.past - current
         self.past = current
-        print("coords: ", x, y, "\nidx", x_idx, y_idx,"\n Mag", self.past, "\n----------------")
+        #print("coords: ", x, y, "\nidx", x_idx, y_idx,"\n Mag", self.past, "\n----------------")
 
         self.emitData(error)
     
