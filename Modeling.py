@@ -62,7 +62,6 @@ class positionScaling(QThread):
         x = x*self.m
         y = y*self.m
 
-        y = np.abs(y - self.symmetry_point)
         mg_idx = np.where((self.x == np.round(x,5)) & (self.y == np.round(y,5)))
         cB  = np.sqrt(self.Bx[mg_idx]**2 + self.By[mg_idx]**2)
         self.past = cB
