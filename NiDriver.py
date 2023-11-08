@@ -201,7 +201,7 @@ class niDevice(QThread, Event):
         measured = self.que.get()
         #print(measured, self.scaler)
         measured[0] = 2*measured[0]
-        measured[1] = (measured[1]-self.MgOffset)/self.Mgcoef
+        measured[1] = np.abs((measured[1]-self.MgOffset)/self.Mgcoef)
         if self.feedBackFlag:
             #print(measured[1]/self.T2i_coef*self.resistance1, measured[1]/self.T2i_coef, measured[1], writeC)
             kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
