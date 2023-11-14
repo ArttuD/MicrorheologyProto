@@ -297,5 +297,86 @@ class fit():
     def Weibull_rec(self,x, e_r, e_f, beta, tau):
         return e_f + e_r*(np.exp(-(x/tau)**beta))
 
-
+def load_csv(root):
     
+    df = pd.read_csv(root, sep = ",", skiprows= [0,1], names = ["x", "y", "By", "Bx"])
+    #drop not needed
+    df.drop(df[df["y"].values < (0.0035 - 1536*m)].index, inplace = True)
+    df.drop(df[df["x"].values > 0.00054].index, inplace = True)
+
+    B = np.sqrt(df["By"]**2 + df["Bx"]**2)
+    
+    rows = df["x"].unique()
+    columns = df["y"].unique()
+
+    return B, rows, columns
+
+
+def findPoint(x,y):
+
+    x_idx = np.argmin(np.abs((rows-np.round(x,5))))
+    y_idx = np.argmin(np.abs((columns-np.round(y,5))))
+    current = B[x_idx, y_idx]
+    error = prev_ - current
+    prev_ = current
+    
+
+def fit_calibration(df):
+    cut_off = 5*100
+    maxIndex = np.where(df["measured"].values >=0.5)[0][0]
+    x = df["measured"].values[cut_off:maxIndex]
+    y = df["Mg"].values[cut_off:maxIndex]
+    k, b  = np.polyfit(x,y, 1)
+    
+    return x, y, k, b, cut_off, maxIndex
+
+def fetchDataNPY(paths):
+    for i in range(len(paths)):
+        datas = np.load(paths[i])
+        print(datas, "\ni",i )
+        if i == 0:
+            df = pd.DataFrame(datas.T, columns = ['index','aim','measured','Mg'])
+            df["measurement"] = i
+        else:
+            dftemp = pd.DataFrame(datas.T, columns = ['index','aim','measured','Mg'])
+            dftemp["measurement"] = i
+            df = pd.concat([df, dftemp])
+    
+    return df
+
+def fetchDataCSV(paths):
+    
+    for i in range(len(paths)):
+        if i == 0:
+            df = pd.read_csv(paths[i], index_col = False)
+            df["measurement"] = os.path.split(paths[i])[1].split("_")[1][:-4]
+        else:
+            dftemp =  pd.read_csv(paths[i], index_col = False)
+            dftemp["measurement"] = os.path.split(paths[i])[1].split("_")[1][:-4]
+            df = pd.concat([df, dftemp])
+    return df
+
+def func(x, a, b):
+    return a*np.tanh(x*b)
+
+def kelvin(t,tau,D):
+    return D*(1-np.exp(-t/tau))
+
+def maxwell(t, D, tau):
+    return D*(1+t/tau)
+
+def maxwell_rel(t, E, tau ):
+    return E*np.exp(-t/tau) 
+
+def burger_model(x, E_1, E_2, n_1, n_2):
+    return 1/E_1 + x/n_1 + 1/E_2*(1-np.exp(-x*E_1/n_2))
+
+def burger_rel(x, E_1, E_2, n_1, n_2):
+    t_c = 1
+    return t_c/n_1*(1- np.exp(-(x-t_c)/(n_2/E_2))) + (1/E_1)*np.exp(-(x-t_c)/(n_2/E_2))
+
+def Weibull_creep(x, e_i, e_c, beta, tau):
+    return e_i + e_c*(1-np.exp(-(x/tau)**beta))
+
+def Weibull_rel(x, e_r, e_f, beta, tau):
+    return e_f + e_r*(np.exp(-(x/tau)**beta))
