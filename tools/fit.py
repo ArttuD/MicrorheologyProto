@@ -152,13 +152,32 @@ class fit():
         
         return df_mg, df_ref, df_tot
 
-    def process_single(self, path_pickle, path_numpy):
+    def process_single(self, path_pickle, path_numpy, flag, count):
 
-        df = self.download_pickle(path_pickle)
-
+        if flag:
+            df = self.download_pickle(path_pickle)
+        else:
+            df = path_pickle
         df_driver = self.download_numpy(path_numpy)
 
         fig, ax = plt.subplots(1,2, figsize=(10,7), facecolor="white")
+
+        ax[1].set_title("Displacmeent summary")
+        ax[1].plot(df["time"],df["x"], color = "red", label = "x-displacement")
+        ax[1].plot(df["time"],df["y"], color = "black",label = "y-displacement")
+        ax[1].plot(df["time"],df["r"], color = "purple", label = "r-displacement")
+        self.start_time = df["time"].values[self.start]
+        self.t_c = df["time"].values[self.end]
+        ax[1].vlines(self.start_time, df["x"].min(), df["x"].max(), color = "blue", label = "Start creep", linestyle = "dashed")
+        ax[1].vlines(self.t_c, df["x"].min(), df["x"].max(), color = "blue", label = "Start recovery", linestyle = "dashed")
+        
+
+        df["r"] = self.normalize(df["r"])
+        df["time"] = self.normalize(df["time"])
+
+        self.epsilon = np.mean(df["r"].values[self.end-5:self.end])
+        self.start_time = df["time"].values[self.start]
+        self.t_c = df["time"].values[self.end]
 
         ax[0]. set_title("Current and Magnetic Field flux")
         ax[0].set_xlabel("time (s)")
@@ -166,20 +185,14 @@ class fit():
         ax[0].plot(df_driver["index"],df_driver["measured"], label = "Measured i")
         ax[0].plot(df_driver["index"],df_driver["Mg"], label = "Measured B")
 
-        ax[1].set_title("Displacmeent summary")
-        ax[1].plot(df["time"],df["x"], color = "red", label = "x-displacement")
-        ax[1].plot(df["time"],df["y"], color = "black",label = "y-displacement")
-        ax[1].plot(df["time"],df["r"], color = "purple", label = "r-displacement")
-        ax[1].vlines(self.start_time, df["x"].min(), df["x"].max(), color = "blue", label = "Start creep", linestyle = "dashed")
-        ax[1].vlines(self.t_c, df["x"].min(), df["x"].max(), color = "blue", label = "Start recovery", linestyle = "dashed")
-        
-        plt.savefig(os.path.join(os.path.split(path_pickle)[0],"basics.png"))
+        ax[0].legend()
+
+
+
+        plt.savefig(os.path.join(os.path.split(path_numpy)[0],"basics_{}.png".format(count)))
         plt.close()
 
         fig, ax = plt.subplots(2,2, figsize=(10,10), facecolor="white")
-
-        df["r"] = self.normalize(df["r"])
-        df["time"] = self.normalize(df["time"])
 
         t_hat_creep = df["time"][self.start:self.end]-df["time"].values[self.start]
         t_hat_rec = df["time"][self.end:]-df["time"].values[self.start]
@@ -187,55 +200,60 @@ class fit():
         t_pred_creep = np.arange(t_hat_creep.min(),t_hat_creep.max(), 0.001)
         t_pred_rec = np.arange(t_hat_rec.min(),t_hat_rec.max(), 0.001)
 
-        self.epsilon = np.mean(df["r"].values[self.end-20:self.end])
-        self.t_c = df["time"].values[self.end]
-
-
         ax[0,0].set_title("Weibull")
-        p, p_ = curve_fit(self.Weibull_creep, t_hat_creep, df["r"][self.start:self.end], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
-        #creep_label = "Creep: tau: {}".format(np.round(p[-1],5))
-        #ax[0,0].plot(t_pred_creep, self.Weibull_creep(t_pred_creep,*p), label = creep_label, color = "red")
-
-        p_1, p__ = curve_fit(self.Weibull_rec, t_hat_rec, df["r"][self.end:], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
-        creep_label = "Creep: tau: {}\nRel: tau: {}".format(np.round(p[-1],5),np.round(p[-1],5))
-
-        ax[0,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.Weibull_creep(t_pred_creep,*p),self.Weibull_rec(t_pred_rec,*p_1)), label = creep_label, color = "red")
+        try:
+            p, p_ = curve_fit(self.Weibull_creep, t_hat_creep, df["r"][self.start:self.end], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
+            #creep_label = "Creep: tau: {}".format(np.round(p[-1],5))
+            #ax[0,0].plot(t_pred_creep, self.Weibull_creep(t_pred_creep,*p), label = creep_label, color = "red")
+            p_1, p__ = curve_fit(self.Weibull_rec, t_hat_rec, df["r"][self.end:], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
+            creep_label = "Creep: tau: {}\nRel: tau: {}".format(np.round(p[-1],5),np.round(p[-1],5))
+            ax[0,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.Weibull_creep(t_pred_creep,*p),self.Weibull_rec(t_pred_rec,*p_1)), label = creep_label, color = "red")
+        except:
+            print("Weibull failed")
+        #print("moi",df["time"][self.start:]-df["time"][self.start])
+        #print("moi moi", df["r"][self.start:])
         ax[0,0].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
 
         ax[0,0].set_xlabel("time (s)")
         ax[0,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
         ax[0,0].legend(loc = "upper left",fontsize = 6)
-
-        ax[0,1].set_title("Maxwell model")
-        p, pcov = curve_fit(self.combine_maxwell, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0], [np.inf,np.inf]), maxfev = 1000000, method = "trf")
-        maxwell_label = "maxwell: \ntau: {}".format(np.round(p[-1]/p[1],5))
-        ax[0,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.maxwell_creep(t_pred_creep,*p), self.maxwell_rec(t_pred_rec,*p) ), label = maxwell_label,color = "red")
+        try:
+            ax[0,1].set_title("Maxwell model")
+            p, pcov = curve_fit(self.combine_maxwell, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
+            maxwell_label = "maxwell: \ntau: {}".format(np.round(p[-1]/p[1],5))
+            ax[0,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.maxwell_creep(t_pred_creep,*p), self.maxwell_rec(t_pred_rec,*p) ), label = maxwell_label,color = "red")
+        except:
+            print("maxwell failed")
         ax[0,1].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
         ax[0,1].legend(loc = "upper left",fontsize = 6)
         ax[0,1].set_xlabel("time (s)")
         ax[0,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
 
         ax[1,0].set_title("Burger model")
-        p, pcov = curve_fit(self.combine_burger, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0,0,0], [np.inf,np.inf,np.inf,np.inf]), maxfev = 1000000, method = "trf")
-        burger_label = "Burger: \ntau: {}".format(np.round(p[-1]/p[1],5))
-        ax[1,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.burger_creep(t_pred_creep,*p), self.burger_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+        try:
+            p, pcov = curve_fit(self.combine_burger, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0,0,0], [np.inf,np.inf,np.inf,np.inf]), maxfev = 10000, method = "trf")
+            burger_label = "Burger: \ntau: {}".format(np.round(p[-1]/p[1],5))
+            ax[1,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.burger_creep(t_pred_creep,*p), self.burger_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+        except:
+            print("Burger failed")
         ax[1,0].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
         ax[1,0].legend(loc = "upper left",fontsize = 6)
         ax[1,0].set_xlabel("time (s)")
         ax[1,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
 
         ax[1,1].set_title("Kelvin-Voigt")
-        p, pcov = curve_fit(self.combine_kelvin, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:],bounds=([0,0], [np.inf,np.inf]), maxfev = 1000000, method = "trf")
-
-        burger_label = "kelvin: \ntau: {}".format(np.round(p[-1]/p[1],5))
-        ax[1,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.kelvin_creep(t_pred_creep,*p), self.kelvin_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+        try: 
+            p, pcov = curve_fit(self.combine_kelvin, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:],bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
+            burger_label = "kelvin: \ntau: {}".format(np.round(p[-1]/p[1],5))
+            ax[1,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.kelvin_creep(t_pred_creep,*p), self.kelvin_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+        except:
+            print("Kelvin failed")   
         ax[1,1].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
-
         ax[1,1].legend(loc = "upper left",fontsize = 6)
         ax[1,1].set_xlabel("time (s)")
         ax[1,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
         
-        plt.savefig(os.path.join(os.path.split(path_pickle)[0],"fits.png"))
+        plt.savefig(os.path.join(os.path.split(path_numpy)[0],"fits_{}.png".format(count)))
         plt.close()
 
     def combine_burger(self, x_tot, E_1, E_2, n_1, n_2):
