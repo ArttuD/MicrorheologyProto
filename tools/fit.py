@@ -43,13 +43,24 @@ class fit():
 
         df_track["time"] = df_track["t"]*1/40
 
-        df_track["x"] = scipy.signal.detrend(scipy.ndimage.gaussian_filter(df_track["x"].max()-df_track["x"],5))
-        df_track["y"] = scipy.signal.detrend(scipy.ndimage.gaussian_filter(df_track["y"],5))
+        df_track["x"] = scipy.ndimage.gaussian_filter(df_track["x"].max()-df_track["x"],5)
+        df_track["y"] = scipy.ndimage.gaussian_filter(df_track["y"],5)
+        df_track["x"] = df_track["x"].max() - df_track["x"]
+
         df_track["x"] -= df_track["x"].values[0]
         df_track["y"] -= df_track["y"].values[0]
 
         df_track["r"] = np.sqrt(df_track["x"]**2 + df_track["y"]**2)
-        df_track["r"] -= df_track["r"].values[0]
+
+        df_track["label"] = "0"
+        df_track["type"] = "mg"
+
+        df_track["x_ref"] = 0
+        df_track["y_ref"] = 0 
+        df_track["r_ref"] = 0
+        df_track["r"] = 0
+        df_track["tag_ref"] = "0"
+        df_track["tag_mg"] = "0"
 
         return df_track
 
@@ -157,104 +168,113 @@ class fit():
         if flag:
             df = self.download_pickle(path_pickle)
         else:
-            df = path_pickle
+            df = self.download_json(path_pickle)
+            
         df_driver = self.download_numpy(path_numpy)
 
-        fig, ax = plt.subplots(1,2, figsize=(10,7), facecolor="white")
+        counter = 0
+        for i in df.groupby(['tag_mg', "timestamps"]).mean().reset_index().groupby(["tag_mg"]):
 
-        ax[1].set_title("Displacmeent summary")
-        ax[1].plot(df["time"],df["x"], color = "red", label = "x-displacement")
-        ax[1].plot(df["time"],df["y"], color = "black",label = "y-displacement")
-        ax[1].plot(df["time"],df["r"], color = "purple", label = "r-displacement")
-        self.start_time = df["time"].values[self.start]
-        self.t_c = df["time"].values[self.end]
-        ax[1].vlines(self.start_time, df["x"].min(), df["x"].max(), color = "blue", label = "Start creep", linestyle = "dashed")
-        ax[1].vlines(self.t_c, df["x"].min(), df["x"].max(), color = "blue", label = "Start recovery", linestyle = "dashed")
-        
+            tags = i[0]
+            data = i[1].reset_index()
 
-        df["r"] = self.normalize(df["r"])
-        df["time"] = self.normalize(df["time"])
+            if counter == 0:
+                fig, ax = plt.subplots(1,2, figsize=(10,7), facecolor="white")
 
-        self.epsilon = np.mean(df["r"].values[self.end-5:self.end])
-        self.start_time = df["time"].values[self.start]
-        self.t_c = df["time"].values[self.end]
+                ax[1].set_title("Displacmeent summary")
+                ax[1].plot(data["time"],data["x"], color = "red", label = "x-displacement")
+                ax[1].plot(data["time"],data["y"], color = "black",label = "y-displacement")
+                ax[1].plot(data["time"],data["r"], color = "purple", label = "r-displacement")
+                self.start_time = data["time"].values[self.start]
+                self.t_c = data["time"].values[self.end]
+                ax[1].vlines(self.start_time, data["x"].min(), data["x"].max(), color = "blue", label = "Start creep", linestyle = "dashed")
+                ax[1].vlines(self.t_c, data["x"].min(), data["x"].max(), color = "blue", label = "Start recovery", linestyle = "dashed")
+                
 
-        ax[0]. set_title("Current and Magnetic Field flux")
-        ax[0].set_xlabel("time (s)")
-        ax[0].set_ylabel("i or B (A or T)")
-        ax[0].plot(df_driver["index"],df_driver["measured"], label = "Measured i")
-        ax[0].plot(df_driver["index"],df_driver["Mg"], label = "Measured B")
+                data["r"] = self.normalize(data["r"])
+                data["time"] = self.normalize(data["time"])
 
-        ax[0].legend()
+                self.epsilon = np.mean(data["r"].values[self.end-5:self.end])
+                self.start_time = data["time"].values[self.start]
+                self.t_c = data["time"].values[self.end]
 
+                ax[0]. set_title("Current and Magnetic Field flux")
+                ax[0].set_xlabel("time (s)")
+                ax[0].set_ylabel("i or B (A or T)")
+                ax[0].plot(df_driver["index"],df_driver["measured"], label = "Measured i")
+                ax[0].plot(df_driver["index"],df_driver["Mg"], label = "Measured B")
 
+                ax[0].legend()
 
-        plt.savefig(os.path.join(os.path.split(path_numpy)[0],"basics_{}.png".format(count)))
-        plt.close()
+                plt.savefig(os.path.join(os.path.split(path_numpy)[0],"basics_{}.png".format(count)))
+                plt.close()
 
-        fig, ax = plt.subplots(2,2, figsize=(10,10), facecolor="white")
+            fig, ax = plt.subplots(2,2, figsize=(10,10), facecolor="white")
+            plt.suptitle("Fit_{}".format(tags))
 
-        t_hat_creep = df["time"][self.start:self.end]-df["time"].values[self.start]
-        t_hat_rec = df["time"][self.end:]-df["time"].values[self.start]
+            t_hat_creep = data["time"][self.start:self.end]-data["time"].values[self.start]
+            t_hat_rec = data["time"][self.end:]-data["time"].values[self.start]
 
-        t_pred_creep = np.arange(t_hat_creep.min(),t_hat_creep.max(), 0.001)
-        t_pred_rec = np.arange(t_hat_rec.min(),t_hat_rec.max(), 0.001)
+            t_pred_creep = np.arange(t_hat_creep.min(),t_hat_creep.max(), 0.001)
+            t_pred_rec = np.arange(t_hat_rec.min(),t_hat_rec.max(), 0.001)
 
-        ax[0,0].set_title("Weibull")
-        try:
-            p, p_ = curve_fit(self.Weibull_creep, t_hat_creep, df["r"][self.start:self.end], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
-            #creep_label = "Creep: tau: {}".format(np.round(p[-1],5))
-            #ax[0,0].plot(t_pred_creep, self.Weibull_creep(t_pred_creep,*p), label = creep_label, color = "red")
-            p_1, p__ = curve_fit(self.Weibull_rec, t_hat_rec, df["r"][self.end:], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
-            creep_label = "Creep: tau: {}\nRel: tau: {}".format(np.round(p[-1],5),np.round(p[-1],5))
-            ax[0,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.Weibull_creep(t_pred_creep,*p),self.Weibull_rec(t_pred_rec,*p_1)), label = creep_label, color = "red")
-        except:
-            print("Weibull failed")
-        #print("moi",df["time"][self.start:]-df["time"][self.start])
-        #print("moi moi", df["r"][self.start:])
-        ax[0,0].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
+            ax[0,0].set_title("Weibull")
+            try:
+                p, p_ = curve_fit(self.Weibull_creep, t_hat_creep, data["r"][self.start:self.end], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
+                #creep_label = "Creep: tau: {}".format(np.round(p[-1],5))
+                #ax[0,0].plot(t_pred_creep, self.Weibull_creep(t_pred_creep,*p), label = creep_label, color = "red")
+                p_1, p__ = curve_fit(self.Weibull_rec, t_hat_rec, data["r"][self.end:], bounds=([0,0,0,0], [np.inf,np.inf, 1, np.inf]), maxfev = 10000, method = "trf")
+                creep_label = "Creep: tau: {}\nRel: tau: {}".format(np.round(p[-1],5),np.round(p[-1],5))
+                ax[0,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.Weibull_creep(t_pred_creep,*p),self.Weibull_rec(t_pred_rec,*p_1)), label = creep_label, color = "red")
+            except:
+                print("Weibull failed")
+            #print("moi",data["time"][self.start:]-data["time"][self.start])
+            #print("moi moi", data["r"][self.start:])
+            ax[0,0].scatter(data["time"][self.start:]-data["time"][self.start], data["r"][self.start:], color = "black", label = "data")
 
-        ax[0,0].set_xlabel("time (s)")
-        ax[0,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
-        ax[0,0].legend(loc = "upper left",fontsize = 6)
-        try:
-            ax[0,1].set_title("Maxwell model")
-            p, pcov = curve_fit(self.combine_maxwell, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
-            maxwell_label = "maxwell: \ntau: {}".format(np.round(p[-1]/p[1],5))
-            ax[0,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.maxwell_creep(t_pred_creep,*p), self.maxwell_rec(t_pred_rec,*p) ), label = maxwell_label,color = "red")
-        except:
-            print("maxwell failed")
-        ax[0,1].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
-        ax[0,1].legend(loc = "upper left",fontsize = 6)
-        ax[0,1].set_xlabel("time (s)")
-        ax[0,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
+            ax[0,0].set_xlabel("time (s)")
+            ax[0,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
+            ax[0,0].legend(loc = "upper left",fontsize = 6)
+            try:
+                ax[0,1].set_title("Maxwell model")
+                p, pcov = curve_fit(self.combine_maxwell, data["time"][self.start:] - data["time"][self.start], data["r"][self.start:], bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
+                maxwell_label = "maxwell: \ntau: {}".format(np.round(p[-1]/p[1],5))
+                ax[0,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.maxwell_creep(t_pred_creep,*p), self.maxwell_rec(t_pred_rec,*p) ), label = maxwell_label,color = "red")
+            except:
+                print("maxwell failed")
+            ax[0,1].scatter(data["time"][self.start:]-data["time"][self.start], data["r"][self.start:], color = "black", label = "data")
+            ax[0,1].legend(loc = "upper left",fontsize = 6)
+            ax[0,1].set_xlabel("time (s)")
+            ax[0,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
 
-        ax[1,0].set_title("Burger model")
-        try:
-            p, pcov = curve_fit(self.combine_burger, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:], bounds=([0,0,0,0], [np.inf,np.inf,np.inf,np.inf]), maxfev = 10000, method = "trf")
-            burger_label = "Burger: \ntau: {}".format(np.round(p[-1]/p[1],5))
-            ax[1,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.burger_creep(t_pred_creep,*p), self.burger_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
-        except:
-            print("Burger failed")
-        ax[1,0].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
-        ax[1,0].legend(loc = "upper left",fontsize = 6)
-        ax[1,0].set_xlabel("time (s)")
-        ax[1,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
+            ax[1,0].set_title("Burger model")
+            try:
+                p, pcov = curve_fit(self.combine_burger, data["time"][self.start:] - data["time"][self.start], data["r"][self.start:], bounds=([0,0,0,0], [np.inf,np.inf,np.inf,np.inf]), maxfev = 10000, method = "trf")
+                burger_label = "Burger: \ntau: {}".format(np.round(p[-1]/p[1],5))
+                ax[1,0].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.burger_creep(t_pred_creep,*p), self.burger_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+            except:
+                print("Burger failed")
+            ax[1,0].scatter(data["time"][self.start:]-data["time"][self.start], data["r"][self.start:], color = "black", label = "data")
+            ax[1,0].legend(loc = "upper left",fontsize = 6)
+            ax[1,0].set_xlabel("time (s)")
+            ax[1,0].set_ylabel(r" $\epsilon$ ($\mu$m)")
 
-        ax[1,1].set_title("Kelvin-Voigt")
-        try: 
-            p, pcov = curve_fit(self.combine_kelvin, df["time"][self.start:] - df["time"][self.start], df["r"][self.start:],bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
-            burger_label = "kelvin: \ntau: {}".format(np.round(p[-1]/p[1],5))
-            ax[1,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.kelvin_creep(t_pred_creep,*p), self.kelvin_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
-        except:
-            print("Kelvin failed")   
-        ax[1,1].scatter(df["time"][self.start:]-df["time"][self.start], df["r"][self.start:], color = "black", label = "data")
-        ax[1,1].legend(loc = "upper left",fontsize = 6)
-        ax[1,1].set_xlabel("time (s)")
-        ax[1,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
-        
-        plt.savefig(os.path.join(os.path.split(path_numpy)[0],"fits_{}.png".format(count)))
-        plt.close()
+            ax[1,1].set_title("Kelvin-Voigt")
+            try: 
+                p, pcov = curve_fit(self.combine_kelvin, data["time"][self.start:] - data["time"][self.start], data["r"][self.start:],bounds=([0,0], [np.inf,np.inf]), maxfev = 10000, method = "trf")
+                burger_label = "kelvin: \ntau: {}".format(np.round(p[-1]/p[1],5))
+                ax[1,1].plot(np.append(t_pred_creep,t_pred_rec), np.append(self.kelvin_creep(t_pred_creep,*p), self.kelvin_rec(t_pred_rec,*p) ), label = burger_label,color = "red")
+            except:
+                print("Kelvin failed")   
+            ax[1,1].scatter(data["time"][self.start:]-data["time"][self.start], data["r"][self.start:], color = "black", label = "data")
+            ax[1,1].legend(loc = "upper left",fontsize = 6)
+            ax[1,1].set_xlabel("time (s)")
+            ax[1,1].set_ylabel(r" $\epsilon$ ($\mu$m)")
+            
+            plt.savefig(os.path.join(os.path.split(path_numpy)[0],"fits_{}.png".format(tags)))
+            plt.close()
+
+            count += 1
 
     def combine_burger(self, x_tot, E_1, E_2, n_1, n_2):
 
@@ -398,3 +418,138 @@ def Weibull_creep(x, e_i, e_c, beta, tau):
 
 def Weibull_rel(x, e_r, e_f, beta, tau):
     return e_f + e_r*(np.exp(-(x/tau)**beta))
+
+
+def download_pickle(path):
+
+    with open(path, "rb") as input_file:
+        file_track = cPickle.load(input_file)
+        
+    df_track = pd.DataFrame.from_dict(file_track)
+
+    df_track["time"] = df_track["t"]*1/40
+
+    df_track["x"] = scipy.ndimage.gaussian_filter(df_track["x"].max()-df_track["x"],5)
+    df_track["y"] = scipy.ndimage.gaussian_filter(df_track["y"],5)
+    df_track["x"] = df_track["x"].max() - df_track["x"]
+
+    df_track["x"] -= df_track["x"].values[0]
+    df_track["y"] -= df_track["y"].values[0]
+
+    df_track["r"] = np.sqrt(df_track["x"]**2 + df_track["y"]**2)
+
+    df_track["label"] = "0"
+    df_track["type"] = "mg"
+
+    df_track["x_ref"] = 0
+    df_track["y_ref"] = 0 
+    df_track["r_ref"] = 0
+    df_track["r"] = 0
+    df_track["tag_ref"] = "0"
+    df_track["tag_mg"] = "0"
+
+    return df_track
+
+def download_json(path):
+
+    start_stamp = 5
+    end_stamp = 90
+    df_array = []
+    fps = 40
+    start = int(start_stamp/(1/fps))
+    end = int(end_stamp/(1/fps))
+
+    with open(path, "rb") as input_file:
+        file_dict = json.load(input_file)
+
+    for i in file_dict.keys():
+                
+        parts = i.split("_")
+        if parts[0] == "ref":
+            if parts[1] == "0":
+                temp_df = pd.DataFrame.from_dict(file_dict[i])
+
+                temp_df["time"] = temp_df["timestamps"]*1/fps
+
+                temp_df["x"] = scipy.ndimage.gaussian_filter(temp_df["x"],5)
+                temp_df["y"] = scipy.ndimage.gaussian_filter(temp_df["y"],5)
+                temp_df["x"] = temp_df["x"].max() - temp_df["x"]
+
+
+                temp_df["x"] -= temp_df["x"].values[0]
+                temp_df["y"] -= temp_df["y"].values[0]
+                df_ref = temp_df
+                df_ref["label"] = parts[1]
+            else:
+                temp_df = pd.DataFrame.from_dict(file_dict[i])
+                temp_df["label"] = parts[1]
+
+                temp_df["time"] = temp_df["timestamps"]*1/fps
+                temp_df["x"] = scipy.ndimage.gaussian_filter(temp_df["x"],5)
+                temp_df["y"] = scipy.ndimage.gaussian_filter(temp_df["y"],5)
+                temp_df["x"] = temp_df["x"].max() - temp_df["x"]
+
+                temp_df["x"] -= temp_df["x"].values[0]
+                temp_df["y"] -= temp_df["y"].values[0]
+
+                df_ref = pd.concat((df_ref,temp_df))
+            df_ref["type"] = "ref"
+            #df_ref["label"] = parts[1]
+        else:
+            if parts[1] == "0":
+                temp_df = pd.DataFrame.from_dict(file_dict[i])
+                temp_df["x"] = scipy.ndimage.gaussian_filter(temp_df["x"],5)
+                temp_df["y"] = scipy.ndimage.gaussian_filter(temp_df["y"],5)
+                temp_df["x"] = temp_df["x"].max() - temp_df["x"]
+
+                temp_df["time"] = temp_df["timestamps"]*1/fps
+                temp_df["x"] -= temp_df["x"].values[0]
+                temp_df["y"] -= temp_df["y"].values[0]
+                df_mg = temp_df
+                df_mg["label"] = parts[1]
+            else:
+                temp_df = pd.DataFrame.from_dict(file_dict[i])
+                temp_df["label"] = parts[1]
+
+                temp_df["time"] = temp_df["timestamps"]*1/fps
+                temp_df["x"] = scipy.ndimage.gaussian_filter(temp_df["x"],5)
+                temp_df["y"] = scipy.ndimage.gaussian_filter(temp_df["y"],5)
+                temp_df["x"] = temp_df["x"].max() - temp_df["x"]
+
+                temp_df["x"] -= temp_df["x"].values[0]
+                temp_df["y"] -= temp_df["y"].values[0]
+                df_mg = pd.concat((df_mg,temp_df))
+            
+            df_mg["type"] = "mg"
+
+    for i in df_ref.groupby((["label"])):
+        tags = i[0][0]
+        frame = i[1]
+        
+        for j in df_mg.groupby((["label"])):
+            tags_mg = j[0][0]
+            #print(tags_mg)
+            frame_mg = j[1]
+            frame_mg["x_ref"] = frame_mg["x"] -  frame["x"]
+            frame_mg["y_ref"] = frame_mg["y"] -  frame["y"]
+
+            frame_mg["x_ref"] -= frame_mg["x_ref"].values[self.start]
+            frame_mg["y_ref"] -= frame_mg["y_ref"].values[self.start]
+            
+            frame_mg["r_ref"] = scipy.signal.detrend(np.sqrt(frame_mg["x_ref"]**2 +  frame_mg["y_ref"]**2))
+            frame_mg["r_ref"] -= frame_mg["r_ref"].values[self.start]
+
+            frame_mg["r"] = np.sqrt(frame_mg["x"]**2 +  frame_mg["y"]**2)
+            frame_mg["r"] -= frame_mg["r"].values[self.start]
+
+            frame_mg["tag_ref"] = tags
+            frame_mg["tag_mg"] = tags_mg
+            df_array.append(frame_mg)
+
+    for count, k in enumerate(df_array):
+        if count == 0:
+            df_tot = k
+        else:
+            df_tot = pd.concat((df_tot,k))
+    
+    return df_mg, df_ref, df_tot
