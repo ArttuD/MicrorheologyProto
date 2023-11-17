@@ -419,6 +419,8 @@ def Weibull_creep(x, e_i, e_c, beta, tau):
 def Weibull_rel(x, e_r, e_f, beta, tau):
     return e_f + e_r*(np.exp(-(x/tau)**beta))
 
+def normalize(data):
+    return (data - np.min(data)) / (np.max(data) - np.min(data))
 
 def download_pickle(path):
 
