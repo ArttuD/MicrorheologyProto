@@ -22,16 +22,15 @@ class niDevice(QThread, Event):
     print_str = pyqtSignal(str) #self.print_str.emit
 
 
-    def __init__(self, event, args):
+    def __init__(self, args, ctr):
         super().__init__()
         self.args = args
+        self.ctr = ctr
 
-        self.event = event
         #flags
-        self.feedBackFlag = False
-        self.saveFlag = False
         self.BFeedback = False
         self.modelFlag = False
+        self.saveFlag = ctr["save"]
 
         self.writeQue = Queue(maxsize=100)
         self.resOneQue = Queue(maxsize=100)
@@ -73,60 +72,6 @@ class niDevice(QThread, Event):
     def list_properties(self):
         self.properties = "Saving to {}. Running with Hall B slope: {}, offset {}, B2i conversion {}, Resistance {}, and model scaling {}".format( self.root, self.Mgcoef, self.MgOffset, self.T2i_coef, self.resistance1, self.model_coef)
 
-    def addModel(self,model):
-        self.modelFlag = True
-        self.model = model
-        self.model.magData.connect(self.receiveScaler)
-
-    def askUser(self):
-
-        """
-        Turn on relay and wait for stop command
-        """
-
-        self.NiDWriter.start()
-        self.NiDWriter.write(True, 1000)
-
-        while True:
-            if self.event.is_set():
-                break
-            else:
-                time.sleep(2)
-                    
-        self.NiDWriter.write(False, 1000)
-        self.NiDWriter.stop()
-        
-        #wait here the thread!
-
-        while True:
-            if self.NiAlReader.is_task_done():
-                break
-            else:
-                time.sleep(1)
-
-        if self.modelFlag:
-            with self.modelScaler.mutex:
-                self.modelScaler.queue.clear()
-
-        with self.modelScaler.mutex:
-            self.modelScaler.queue.clear()
-
-        with self.modelScaler.mutex:
-            self.modelScaler.queue.clear()
-
-        self.threadProcess.join()
-        self.iteration = 0 
-        self.NiAlReader.close()
-        self.NiAlWriter.close()
-        self.NiDWriter.close()
-
-        return 1
-
-
-    def updateScaler(self):
-        if self.modelScaler.empty() == False:
-            self.scaler = self.modelScaler.get()/self.T2i_coef
-            #print("scaler:", self.scaler)
     
     def cfg_AO_writer_task(self):
         #Config analog output channel between -10 and 10V
@@ -155,33 +100,16 @@ class niDevice(QThread, Event):
         """
         Calc mean and send to process or close when sequence is over
         """
-        if (self.event.is_set() == False) & (self.iteration < self.NSamples):
+        if (self.ctr["closing"] == False) & (self.iteration < self.NSamples):
             self.readerStreamIn.read_many_sample(self.bufferIn, self.buffer_size, timeout = nidaqmx.constants.WAIT_INFINITELY)
             self.values = np.append(self.values,np.stack((np.mean(self.bufferIn[0,:]),np.abs(np.mean(self.bufferIn[1,:]))), axis = 0).reshape(2,1), axis = 1)
             self.que.put(self.values[:,-1])
             self.iteration += 1
         else:
             self.NiAlReader.stop()
+            self.que.put(-1)
             
         return 0
-
-    def searchwriter(self):
-        if self.writeQue.empty():
-            return self.currentToWrite
-        else:
-            return self.writeQue.get()
-
-    def searchResOne(self):
-        if self.resOneQue.empty():
-            return self.resistance1
-        else:
-            return self.resOneQue.get()
-
-    def changeWritingCurrent(self,value):
-        self.writeQue.put(value)
-
-    def changeWritingRes(self,value):
-        self.resOneQue.put(value)
 
     def checkLimits(self, data):
         """
@@ -194,172 +122,213 @@ class niDevice(QThread, Event):
 
         return data
 
-    def fetchQue(self, QueIndex, writeC):
+    def write_empty(self):
+
+        for i in range(5):
+            self.NiAlWriter.write(0,1000)
+
+    def run(self):
+
+        self.mode = self.ctr["mode"]
+        self.saveFlag = self.ctr["save"]
+        self.resistance1 = self.ctr["res"]
+
+        self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
+
+        self.initTasks()
+        """
+        Turn on relay and wait for stop command
+        """
+        self.NiDWriter.start()
+        self.NiDWriter.write(True, 1000)
+
+        self.NiAlWriter.start()
+        self.write_empty()
+        
+        #self.calibrateMgSensor() #calibrate the Mg sensor 
+
+        self.NiAlReader.start() #start reading
+
+        if self.mode == 0:
+            #manual
+            self.NSamples = np.inf #Continue until stopped
+            ret = self.processTune()
+        elif self.mode == 1:
+            #auto
+            self.totalTime = 60
+            self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+            self.generateSlope()
+
+
+        elif self.mode == 2:
+            #meas
+            self.totalTime = self.args.time
+            self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+            self.generateStepWave()
+            #self.SinWave()
+            ret = self.process()
+
+        self.NiDWriter.write(False, 1000)
+        self.write_empty()
+
+        self.NiDWriter.stop() 
+        self.NiAlWriter.stop()
+        self.NiAlReader.close()
+        self.NiAlWriter.close()
+        self.NiDWriter.close()
+
+        #if self.modelFlag:
+        #    with self.modelScaler.mutex:
+        #        self.modelScaler.queue.clear()
+
+        self.iteration = 0 
+        self.totalTime = self.args.time
+        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+        self.ctr["closing"] = False
+
+        return 1
+    
+    def fetchQue(self, measured, writeC):
         """
         Fetch from que and send to filter+PID
         """
-        measured = self.que.get()
         #print(measured, self.scaler)
         measured[0] = 2*measured[0]
         measured[1] = np.abs((measured[1]-self.MgOffset)/self.Mgcoef)
         if self.feedBackFlag:
-            #print(measured[1]/self.T2i_coef*self.resistance1, measured[1]/self.T2i_coef, measured[1], writeC)
             kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
             data = kalmanOut
         else:
             data = (writeC-self.scaler)*self.resistance1
         
         return measured,data
-
-    def write_empty(self):
-
-        for i in range(5):
-            self.NiAlWriter.write(0,1000)
-
+    
     def process(self):
         """
         Pipe measurement
         """
-
-        self.NiAlWriter.start()
-        self.write_empty()
         
         QueIndex = 0
         
         while True:
             if (self.que.empty() == False) & (QueIndex < self.NSamples):
-                
-                #fetch from que
-                measured, data = self.fetchQue(QueIndex, self.sequence[QueIndex])
 
-                #data =  self.sequence[QueIndex]
-                data = self.checkLimits(data)
-                
-                #Emit Qt
-                if QueIndex%10 == 0:
-                    self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
-                    #print(self.s)
-                    self.setData.emit(self.s)
-
-                if self.modelFlag:
-                    self.updateScaler()
-            
-                #write
-                self.NiAlWriter.write(data,1000)
-
-                #Collect
-                self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
-                self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
-                self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
-                self.NpyStorage[3,QueIndex] = measured[1]
-                self.NpyStorage[4,QueIndex] = self.scaler
-                QueIndex += 1
-            else:
-                #empty que or 
-                if (self.event.is_set() == False) & (QueIndex < self.NSamples):
-                    #sampling has not started yet
-                    time.sleep(0.001)
-                else:
-                    #Empty que and measurement done
+                measured = self.que.get()
+                if len(measured) == 1:
                     break
+                else:
+                    #fetch from que
+                    measured, data = self.fetchQue(measured, self.sequence[QueIndex])
+
+                    #data =  self.sequence[QueIndex]
+                    data = self.checkLimits(data)
+                    
+                    #Emit Qt
+                    if QueIndex%10 == 0:
+                        self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]])
+                        self.setData.emit(self.s)
+
+                    #if model_que.is_empty() == False:
+                    #    self.scaler = self.model_que.get()/self.T2i_coef
+                
+                    #write
+                    self.NiAlWriter.write(data,1000)
+
+                    #Collect
+                    self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
+                    self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
+                    self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
+                    self.NpyStorage[3,QueIndex] = measured[1]
+                    self.NpyStorage[4,QueIndex] = self.scaler
+
+                    QueIndex += 1
+            else:
+                time.sleep(0.001)
+
         #Save log
-        self.write_empty()
-        self.NiAlWriter.stop()
         if self.saveFlag:
             np.save(os.path.join(self.root,"driver_{}.npy".format(datetime.date.today())), self.NpyStorage)
 
         return 1
-
-
+        
     def processTune(self):
-
         """
         Tuning measurement
         """
 
-        
-        self.NiAlWriter.start()
-        self.write_empty()
-
         QueIndex = 0
+
+        self.currentToWrite = self.ctr["cur"]
+        self.resistance1 = self.ctr["res"]
+
         while True:
-            if (self.que.empty() == False) & (QueIndex < self.NSamples):
+            if (self.que.empty() == False) & (QueIndex < self.NSamples) :
                 
-                #fetch data
-                self.currentToWrite = self.searchwriter()
-                self.resistance1 = self.searchResOne()
-
-                measured,data = self.fetchQue(QueIndex, self.currentToWrite)
-
-                data = self.checkLimits(data)
-                
-                #write
-                self.NiAlWriter.write(data,1000)
-                
-                #Emit to Qt
-                if QueIndex%10 == 0:
-                    self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
-                    #print(self.s)
-                    self.setData.emit(self.s)
-
-                QueIndex += 1
-            else:
-                if (self.event.is_set() == False) & (QueIndex < self.NSamples):
-                    time.sleep(0.001)
-                else:
+                measured = self.que.get()
+                if len(measured) == 1:
                     break
-        
-        self.write_empty()
-        self.NiAlWriter.stop()
+                else:
+                    #fetch from que
+                    measured, data = self.fetchQue(measured,self.currentToWrite)         
+
+                    data = self.checkLimits(data)
+                    
+                    #write
+                    self.NiAlWriter.write(data,1000)
+                    
+                    #Emit to Qt
+                    if QueIndex%10 == 0:
+                        self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
+                        self.setData.emit(self.s)
+
+                        self.currentToWrite = self.ctr["cur"]
+                        self.resistance1 = self.ctr["res"]
+
+                    QueIndex += 1
+            else:
+                time.sleep(0.001)
+
 
         return 1
 
-    def processAutoTune(self):
+    def processAutoTune(self, event):
         """
         Pipe autocalibration
         """
-        self.NiAlWriter.start()
-        self.write_empty()
         
         QueIndex = 0
         while True:
             if (self.que.empty() == False) & (QueIndex < self.NSamples):
 
-                #fetch
-                measured,data = self.fetchQue(QueIndex, self.sequence[QueIndex])
-
-                data = self.checkLimits(data)
-
-                #write
-                self.NiAlWriter.write(data,1000)
-
-                #emit
-                if QueIndex%10 == 0:
-                    self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
-                    self.setData.emit(self.s)
-
-                self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
-                self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
-                self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
-                self.NpyStorage[3,QueIndex] = measured[1]
-                self.NpyStorage[4,QueIndex] = self.scaler
-                QueIndex += 1
-            else:
-                if (self.event.is_set() == False) & (QueIndex < self.NSamples):
-                    time.sleep(0.001)
-                else:
+                measured = self.que.get()
+                if len(measured) == 1:
                     break
+                else:
+                    #fetch from que
+                    measured, data = self.fetchQue(measured,self.sequence[QueIndex])   
 
-        self.write_empty()
-        
-        self.NiAlWriter.stop()
+                    data = self.checkLimits(data)
+
+                    #write
+                    self.NiAlWriter.write(data,1000)
+
+                    #emit
+                    if QueIndex%10 == 0:
+                        self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]]) #self.plotCoef*self.sequence[QueIndex] +
+                        self.setData.emit(self.s)
+
+                    self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
+                    self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
+                    self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
+                    self.NpyStorage[3,QueIndex] = measured[1]
+                    self.NpyStorage[4,QueIndex] = self.scaler
+
+                    QueIndex += 1
+            else:
+                time.sleep(0.001)
 
         np.save(os.path.join(self.root,"calib_{}.npy".format(datetime.date.today())), self.NpyStorage)
-
         self.fitCalibration()
-
-        self.totalTime = self.args.time
-        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
 
         return 1
             
@@ -374,7 +343,6 @@ class niDevice(QThread, Event):
         k, b= np.polyfit(x,y,1)
         
         self.print_str.emit("New conversion factor: {}".format(k))
-        
         self.T2i_coef = float(k)
 
         plt.scatter(x,y, label = "data", color = "red", alpha= 0.4)
@@ -382,6 +350,7 @@ class niDevice(QThread, Event):
         plt.legend()
         plt.savefig(os.path.join(self.root,'calib_{}.png'.format(datetime.date.today())))   # save the figure to file
         plt.close()
+
         self.print_str.emit("fit results:  k: {}, b: {}".format(k, b))
 
     def initTasks(self):
@@ -395,87 +364,6 @@ class niDevice(QThread, Event):
         self.cfg_AO_writer_task()
         self.cfg_DO_writer_task()
         self.cfg_AL_reader_task()
-
-    def tune(self):
-        """
-        Manual tune source and ref. resistance
-        """
-        
-        self.print_str.emit(self.list_properties())
-        self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
-        self.NSamples = np.inf #Continue until stopped
-        self.initTasks()
-
-        self.threadProcess =  Thread(target = self.processTune)
-        
-        #self.#calibrateMgSensor(=() #calibrate the Mg sensor
-        
-        self.NiAlReader.start() #start reading 
-        self.threadProcess.start() #start writer
-        
-        _ = self.askUser()
-
-        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
-
-        return 1
-
-
-    def start(self):
-        """
-        Measurement
-        """
-        self.print_str.emit(self.list_properties())
-        
-        self.kalman = KalmanF(self.BFeedback,offset=0.012, freq = self.FreqRet)
-        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
-
-        self.generateStepWave()
-        #self.SinWave()
-        
-        self.initTasks()
-
-        self.threadProcess =  Thread(target = self.process)
-        #self.calibrateMgSensor() #calibrate the Mg sensor 
-
-        self.NiAlReader.start() #start reading
-        self.threadProcess.start() #turn on voltage source and wait kill command
-        #if self.MgOffset == None:
-        
-        _ = self.askUser()
-        
-        return 1
-
-    def autoTune(self):
-        """
-        Manual tune source and ref. resistance with linear sequence
-        """
-        self.print_str.emit(self.list_properties())
-
-        self.totalTime = 60
-        self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
-        self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
-        
-        self.generateSlope()
-
-        self.initTasks()
-
-        self.threadProcess =  Thread(target = self.processAutoTune)
-        #self.calibrateMgSensor() #calibrate the Mg sensor
-
-        self.NiAlReader.start() #start reading 
-        self.threadProcess.start() #turn on voltage source and wait kill command
-
-        _ = self.askUser()
-
-        return 1
-
-    @pyqtSlot(float)
-    def receiveScaler(self, data):
-        with self.modelScaler.mutex:
-            self.modelScaler.queue.clear()
-
-        scaler = 1/self.model_coef*data
-        self.modelScaler.put(scaler)
 
     def generateStepWave(self):
         """

@@ -2,6 +2,37 @@
 from filterpy.kalman import KalmanFilter
 import numpy as np
 import pandas as pd
+import ffmpeg
+import datetime
+
+
+def camera_saving(event_saver, q, path, width, height, ending):
+
+    out_name = os.path.join(path,'measurement_{}_{}.mp4'.format(ending, datetime.date.today()))
+
+    out_process = ( 
+    ffmpeg 
+    .input('pipe:', format='rawvideo', pix_fmt='rgb24', s='{}x{}'
+    .format(width, height)) 
+    .output(out_name, pix_fmt='yuv420p') .overwrite_output() 
+    .run_async(pipe_stdin=True) 
+    )
+    idx = 0
+    while True:
+        if (q.empty() == False):
+            packet = q.get()
+            frame = np.stack((packet,packet,packet), axis = -1)
+            out_process.stdin.write( frame.tobytes() )
+            idx += 1
+        else:
+            if not event_saver.is_set():
+                time.sleep(0.01)
+            else:
+                break
+    
+    print("closing stream, saved ", idx, "images")
+    out_process.stdin.close()
+    out_process.wait()
 
 class KalmanF():
 

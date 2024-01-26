@@ -3,23 +3,26 @@ from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import *
 from PyQt6.QtGui import QImage, QPixmap
 
-from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
 import sys
 import numpy as np
-import cv2
 import multiprocessing as mp
-#from multiprocessing import Event
-from threading import Event, Thread
+
+import argparse
+
+import configparser
+import logging
+import os
 
 import time
-import os
 from queue import Queue
-
 
 from NiDriver import niDevice
 from baslerControl import baslerCam
 from Modeling import positionScaling
+from tools import camera_saving
+
+
 
 class App(QWidget):
 
@@ -29,54 +32,70 @@ class App(QWidget):
         self.args = args
         self.logs = logs
 
-        self.event_cam = Event()
-        self.event_NI = Event()
+        #Events
+        self.event_cam = mp.Event()
+        self.event_NI = mp.Event()
+
+        self.event_saver = mp.Event()
+        self.q = mp.Queue()
+
+
+        #control_dicts
+        self.cam_ctr = {"close": False, "mode": 0, "save": False}
+        self.ni_ctr = {"close": False, "mode": 0, "res": 0.26, "cur": 0, "save": False}
 
         #UI geometry
         self.left = 0; self.top = 0
         self.width = 900; self.height = 900
+        self.imgCounter = 0
 
         self.samplingHz = args.buffer_size_cfg/(args.samplingFreq)
 
         #Flags
-        self.liveFlag = False
-        self.drawFlag = False
-        self.trackFlag = False
-        self.feedBackFlag = False
-        self.tuneFlag = False
-        self.calibFlag = False
-        self.MeasFlag = False
-        self.snapFlag = False
+        self.ni_flag = False
+        self.camera_flag = False
+        self.saveFlag = False
         self.modelFlag = False
 
-        self.rectangleQue = Queue(maxsize=0)
+        self.drawFlag = False
+        self.trackFlag = False
+        self.calibFlag = False
+        self.feedBackFlag = False
 
         #Init driver and signal pipe
-        self.driver = niDevice(self.event_NI, self.args)
-        self.driver.setData.connect(self.receiveData)
-        self.driver.print_str.connect(self.receive_NI_str)
+        self.driver = niDevice(self.args, self.ni_ctr)
+
+        self.driver.setData.connect(self.receiveData) #signals
+        self.driver.print_str.connect(self.receive_NI_str) #signals
+
+        self.ni_process = QtCore.QThread()
+        self.driver.moveToThread(self.ni_process)
+        self.ni_process.started.connect(self.driver.run)
 
         #Init driver and signal pipe
-        self.cam = baslerCam(self.event_cam, self.args)
+        self.cam = baslerCam(self.args, self.cam_ctr)
+
         self.cam.changePixmap.connect(self.setImage)
-        self.cam.position.connect(self.receiveTrackData)
-        self.cam.print_str.connect(self.receive_cam_str)
+        self.cam.position.connect(self.receiveTrackData) #signals
+        self.cam.print_str.connect(self.receive_cam_str) #signals
 
-        #Variables for drawing
+        self.cam_process = QtCore.QThread()
+        self.cam.moveToThread(self.cam_process)
+        self.cam_process.started.connect(self.cam.run)
+
+        #Variables for drawin
+        self.rectangleQue = Queue(maxsize=0)
         self.clicks = 0
         self.boundaryFinal = []
         self.pen = QtGui.QPen()
         self.pen.setWidth(5)
-        self.pen.setColor(QtGui.QColor("#EB5160"))
-
-        #cfg GUI
-        self.initUI()
+        self.pen.setColor(QtGui.QColor("#EB5160")) 
 
         self.model = None
 
-        self.cam.print_info()
-
-        self.camere_i = 0
+        #cfg GUI
+        self.initUI()
+        
 
 
     def initUI(self):
@@ -86,25 +105,15 @@ class App(QWidget):
 
         self.win.resize(self.width,self.height)
         
-        #Main layout
-        self.vlayout = QVBoxLayout()
-
-        #1st row: Buttoms 
-        self.hbutton = QHBoxLayout()
-
-        #Text
-        self.htext = QHBoxLayout()
-
-        #3rd: Viz
-        self.hlabels = QHBoxLayout()
-
-        #4th row: sliders, fields and labels
-        self.hlayout = QHBoxLayout()
-        self.accessory = QVBoxLayout()
+        self.vlayout = QVBoxLayout() #Main layout
+        self.hbutton = QHBoxLayout() #1st row: Buttoms 
+        self.htext = QHBoxLayout() #text
+        self.hlabels = QHBoxLayout() #3rd: Viz
+        self.hlayout = QHBoxLayout() #4th row: sliders, fields and labels
+        self.accessory = QVBoxLayout() #4th row: sliders, fields and labels
         
         self.cfg_buttons() #cfg buttons
-        #2nd row: field path 
-        self.textLabel()
+        self.textLabel() #2nd row: field path 
 
         self.cfg_plots() #cfg plots
         self.cfg_image() #set label
@@ -121,13 +130,8 @@ class App(QWidget):
         """
 
         self.label = QLabel(self)
-        #self.label.resize(480, 480)
-    
         self.set_black_screen()
-
         self.label.mousePressEvent = self.getPos
-
-        #Accesories
 
         #Camera
         self.accessory.addWidget(self.snapbtn)
@@ -143,7 +147,6 @@ class App(QWidget):
         self.accessory.addWidget(self.autotune)
         self.accessory.addWidget(self.CurrentValueLabel,QtCore.Qt.AlignmentFlag.AlignTop)
         self.accessory.setSpacing(1)
-        
 
         self.hlabels.addLayout(self.accessory)
         self.hlabels.addWidget(self.label)#QtCore.Qt.AlignmentFlag.AlignCenter
@@ -159,8 +162,8 @@ class App(QWidget):
         h, w = background.shape
         bytesPerLine = 1 * w
         convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Grayscale8)
-        p = convertToQtFormat.scaled(480, 480) #Qt.AspectRatioMode.KeepAspectRatio
-        self.label.setPixmap(QPixmap(QPixmap.fromImage(p)))  
+        p = convertToQtFormat.scaled(342, 256) 
+        self.label.setPixmap(QPixmap.fromImage(p)) 
 
     def cfg_plots(self):
         """
@@ -226,6 +229,7 @@ class App(QWidget):
         """
         File save path
         """
+
         self.textField = QTextEdit(self.args.path)
         self.textField.setFixedSize(int(self.width/2),50)
 
@@ -273,8 +277,6 @@ class App(QWidget):
         self.saving_data = QCheckBox("Save")
         self.saving_data.stateChanged.connect(self.data_saving)
         self.saving_data.setCheckState(Qt.CheckState.Checked)
-
-        #Process
 
         #Start measurement
         self.btnStart = QPushButton("Start measurement")
@@ -363,11 +365,13 @@ class App(QWidget):
 
     def data_saving(self,state):
         if state == 2:
-            self.cam.saveFlag = True 
-            self.driver.saveFlag = True 
+            self.cam_ctr["saving"] = True 
+            self.ni_ctr["saving"] = True 
+            self.saveFlag = True
         else:
-            self.cam.saveFlag = False
-            self.driver.saveFlag = False  
+            self.cam_ctr["saving"] = False 
+            self.ni_ctr["saving"] = False
+            self.saveFlag = False
 
     def current_feedback(self,state):
         if state == 2:
@@ -395,10 +399,12 @@ class App(QWidget):
         if state == 2:
             self.modelFlag = True
             self.cam.modelFlag = True
+            self.driver.modelFlag = True
+
             self.model = positionScaling()
             
             self.model.addCamera(self.cam)
-            self.driver.addModel(self.model)
+            self.model.magData.connect(self.receiveScaler)
         else:
             self.modelFlag = False
             self.cam.modelFlag = False
@@ -415,19 +421,6 @@ class App(QWidget):
         else:
             self.calibFlag = False
 
-    def livestream(self):
-        """
-        Start camera stream
-        *** No problems
-        """
-        self.logs.info("Starting Live")
-
-        self.liveFlag = True
-        self.streamBtn.setStyleSheet("background-color : white")
-        
-        self.cameraThread =  Thread(target=self.cam.livestream)
-        self.cameraThread.start()
-
     def snapImage(self):
         """
         Snap image to initiate tracker
@@ -436,11 +429,35 @@ class App(QWidget):
         self.reset_frames()
         self.snapbtn.setStyleSheet("background-color : white")
         self.logs.info("Snapped Image")
+
         #snap image
-        self.snapFlag = True
-        self.snapThread =  Thread(target=self.cam.snapImage)
-        self.snapThread.start()
-        self.snapThread.join()
+        self.camera_flag = True
+        self.cam_ctr["mode"] = 0
+
+        self.cam_process.start()
+        time.sleep(0.1)
+
+        self.cam_process.terminate()
+        self.cam_process.wait()
+
+        self.snapbtn.setStyleSheet("background-color : green")
+
+    def livestream(self):
+        """
+        Start camera stream
+        *** No problems
+        """
+
+        self.logs.info("Starting Live")
+
+        self.streamBtn.setStyleSheet("background-color : white")
+        
+        #snap image
+        self.camera_flag = True
+        self.cam_ctr["mode"] = 1
+        self.cam_process.start()
+
+        self.streamBtn.setStyleSheet("background-color : green")
 
 
     def calibrate(self):
@@ -450,43 +467,77 @@ class App(QWidget):
         ***Problems
         * Autotune, not tested!
         """
-        
+        self.CalibBtn.setStyleSheet("background-color : white")
         self.createAndCheckFolder(self.textField.toPlainText())
         self.driver.root = self.textField.toPlainText()
 
-        self.CalibBtn.setStyleSheet("background-color : white")
+        #snap image
+        self.ni_flag = True
         
+        #self.event_Ni = mp.Event()
+        #self.current_q = mp.Queue()
+        #self.resistance_q = mp.Queue()
+
+        if self.cam_ctr["save"]: 
+            self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
+            self.save_thread.start()
+
         if self.calibFlag:
             self.logs.info("Autotune")
             self.printLabel.setText("Calibrating Hall Sensor to the input current...")
-            self.xTune =  Thread(target=self.driver.autoTune)
-            self.xTune.start()
-            self.tuneFlag = True
+            self.ni_ctr["mode"] = 0            
         else:
             self.logs.info("Manul input")
             self.printLabel.setText("Manual current manipulation")
-            self.xTune =  Thread(target=self.driver.tune)
-            self.xTune.start()
-            self.tuneFlag = True
+            self.ni_ctr["mode"] = 1
+
+        self.ni_process.start()
+
+  
+    def start(self):
+        """
+        Start measurement
+            -Fetch path
+            -start current driver and camera
+        """
+        self.logs.info("Starting measurements")
+        self.printLabel.setText("Measurement started")
+
+        self.camera_flag = True
+        self.ni_flag = True
+
+        self.btnStart.setStyleSheet("background-color : white")
+
+        self.createAndCheckFolder(self.textField.toPlainText())
+
+        self.cam.path = self.textField.toPlainText()
+        self.driver.root = self.textField.toPlainText()
+
+        self.cam_ctr["mode"] = 1
+        self.ni_ctr["mode"] = 2
+
+        if self.cam_ctr["save"]: 
+            self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
+            self.save_thread.start()
+
+        self.ni_process.start()
+        self.cam_process.start()
 
     def updateI(self, value):
         #Update input current
         self.sliderILabel.setText(f'Current value: {value/100}')
-        self.driver.changeWritingCurrent(value/100)
+        self.ni_ctr["cur"] = value/100
 
     def updateR(self,value):
         #Update resistance
         self.sliderR1Label.setText(f'Resistance 1 value: {value/100}')
-        self.driver.changeWritingRes(value/100)
+        self.ni_ctr["res"] = value/100
 
     def reset_frames(self):
-
         self.set_black_screen()
         self.cam.trackerTool = None
         self.cam.finalboundaries = None
         self.boundaryFinal = []
-
-
 
     def getPos(self, click):
         """
@@ -546,101 +597,62 @@ class App(QWidget):
         with self.rectangleQue.mutex:
             self.rectangleQue.queue.clear()
 
-
-    def start(self):
-        """
-        Start measurement
-            -Fetch path
-            -start current driver and camera
-        """
-        self.logs.info("Starting measurements")
-
-        self.printLabel.setText("Measurement started")
-        self.MeasFlag = True
-        self.snapbtn.setStyleSheet("background-color : blue")
-
-        self.createAndCheckFolder(self.textField.toPlainText())
-        self.cam.path = self.textField.toPlainText()
-        self.driver.root = self.textField.toPlainText()
-
-        self.driverThread =  Thread(target=self.driver.start)
-        self.driverThread.start()
-        
-        self.cameraThread =  Thread(target=self.cam.recordMeasurement)
-        self.cameraThread.start()
-        
-        self.btnStart.setStyleSheet("background-color : white")
-        
-
     def stop(self):
         """
         Stop tuning, measurement or camera stream and reset Gui
         """
+        
         self.logs.info("Stopping the previous event")
         self.btnStop.setStyleSheet("background-color : white")
 
-        if self.tuneFlag:
-            self.CalibBtn.setStyleSheet("background-color : green")
-            if self.xTune.is_alive():
-                #Stop driver
-                self.event_NI.set()
-            
-            self.xTune.join()
-            #reset
-            self.tuneFlag = False
-            self.event_NI.clear()
+        if self.ni_flag | self.camera_flag:
 
-        elif self.liveFlag:
-            self.streamBtn.setStyleSheet("background-color : green")  
-            #Close streaming camera
-            self.event_cam.set()
-            self.cameraThread.join()
+            if self.ni_flag:
+                self.ni_ctr["close"] = True
+                while self.ni_ctr["close"]:
+                    time.wait(0.1)
+                
+                self.ni_process.terminate()
+                self.ni_process.wait()
 
-            time.sleep(1)
-            
-            #reset
-            self.set_black_screen()
-            self.liveFlag = False
-            self.event_cam.clear()
+            if self.camera_flag:
+                self.cam_ctr["close"] = True
 
-        elif self.MeasFlag:
-            self.btnStart.setStyleSheet("background-color : green")
+                while self.cam_ctr["close"]:
+                    time.wait(0.1)
+                
+                self.cam_process.terminate()
+                self.cam_process.wait()
 
-            #Stop camera and current driver
+            if self.cam_ctr["saving"]:
+                self.save_event.set()
+                self.save_thread.join()
 
-            if self.cameraThread.is_alive():
-                self.event_cam.set()
-            
-            self.cameraThread.join()
+                self.save_event.clear()
+                self.q.clear()
 
-            if self.driverThread.is_alive():
-                self.event_NI.set()
-            
-            self.driverThread.join()
 
-            if self.modelFlag:
-                self.model.initMag(0,0)
+            #if self.modelFlag:
+            #    self.model.initMag(0,0)
 
-            self.event_NI.clear()
-            self.event_cam.clear()
-            self.MeasFlag = False
         else:
             self.printLabel.setText("Nothing is running!")
 
         time.sleep(1)
+        self.CalibBtn.setStyleSheet("background-color : green")
+        self.btnStart.setStyleSheet("background-color : green")
+        self.streamBtn.setStyleSheet("background-color : green")
 
         #clean
         self.initData()
         self.cleanplots()
-
-        self.boundaryFinal = [] 
+        self.reset_frames()
+        self.imgCounter = 0 
 
         #reset
         self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
         self.btnStop.setStyleSheet("background-color : red")
-
-        self.reset_frames()
-        self.printLabel.setText("Ready to rock!!")
+        self.printLabel.setText("Ready")
     
     def shutDown(self):
         """
@@ -663,18 +675,33 @@ class App(QWidget):
         self.plotTrack.setXRange(0, 2048, padding=0, update = False)
         self.plotTrack.setYRange(0, 1536, padding=0, update = False)  
 
-    @pyqtSlot(QImage)
+    @pyqtSlot(np.ndarray)
     def setImage(self, image):
         """
         Image signal pipe
         """
-        self.camere_i += 1
+
+        self.imgCounter += 1
+        image = (image).astype(np.uint8)
+
+        if self.ctrl["mode"] != 1:
+            self.q.put(image)
+
+            # Create a QImage from the normalized image
+            if self.imgCounter%5:
+                q_image = QImage(image, image.shape[1], image.shape[0], image.shape[1] * 1, QImage.Format.Format_Grayscale8)
+                pixmap = QPixmap.fromImage(q_image)
+                p = pixmap.scaled(720, 720) 
+                self.label.setPixmap(p)
+        else:
+            q_image = QImage(image, image.shape[1], image.shape[0], image.shape[1] * 1, QImage.Format.Format_Grayscale8)
+            pixmap = QPixmap.fromImage(q_image)
+            p = pixmap.scaled(720, 720) 
+            self.label.setPixmap(p)
 
         self.receivedFrame = image
-        #print("Qt", self.camere_i*10)
 
-        if (self.liveFlag == False) & (self.trackFlag == True) & (self.snapFlag == False):
-
+        if  (self.trackFlag == True) & (self.snapFlag == False):
             self.drawRectangle(QPixmap(QPixmap.fromImage(self.receivedFrame)))
         else:
             self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
@@ -717,10 +744,10 @@ class App(QWidget):
         self.trackX = np.roll(self.trackX,-1)
         self.trackY = np.roll(self.trackY,-1)
         self.trackX[-1] = (x2+x1)/2
-        self.trackY[-1] = (y2+y1)/2
+        self.trackY[-1] = (y2+y1)/2 #.scaled(342, 256)
 
         self.TrackLine.setData(self.trackX, self.trackY)
-        self.rectangleQue.put(np.array([int(data[0]*480/2048), int(data[1]*480/2048), int(data[2]*480/1536), int(data[3]*480/1536)]))
+        self.rectangleQue.put(np.array([int(data[0]*342/2048), int(data[1]*342/2048), int(data[2]*256/1536), int(data[3]*256/1536)]))
 
     @pyqtSlot(str)
     def receive_NI_str(self,data_str):
@@ -738,15 +765,94 @@ class App(QWidget):
         self.printLabel.setText(data_str)
 
         self.logs.info("NI dirver: {data_str}")
+
+    @pyqtSlot(float)
+    def receiveScaler(self, data):
+        scaler = 1/self.model_coef*data
+        self.model_que.put(scaler)
         
 
-
+"""
 def pymain(args, logs):
     app = QtWidgets.QApplication(sys.argv)
     w = App(args, logs)
     sys.exit(app.exec())
+"""
 
 if __name__ == "__main__":
-    pymain()
+    config = configparser.ConfigParser()
+
+    config_path = sys.argv[0]
+
+    # read specified config file?
+    if config_path.endswith('.ini'):
+        c_path = os.path.join(os.getcwd(),'configs',config_path)
+        if os.path.exists(c_path):
+            config.read(c_path)
+        else:
+            raise NotADirectoryError(c_path)
+    else:
+        # otherwise get the latest
+        config.read(os.path.join(os.getcwd(),'configs','default.ini'))
+
+
+    parser = argparse.ArgumentParser(description='Microrheology test setup.')
+    parser.add_argument('--path', '-p', required = False, type = str, default = r'.\test', help='Save path for all the files, creates folder etc')
+    parser.add_argument("--user", "-u", required=False, default = "DEFAULT",
+                        help = "buffer size for sampling")
+    parser.add_argument("--buffer_size_cfg", "-b", required=False, default = None,
+                        help = "buffer size for sampling")
+    parser.add_argument("--chans_in", "-c", required=False, default = None,
+                        help = "Number of sensors for sampling")
+    parser.add_argument("--time", "-t", required=False, default =  None,
+                        help = "Total time of the measurement")
+    parser.add_argument("--exposure", "-e", required=False, default = None,
+                        help = "Camera's exposure time in ms")
+    parser.add_argument("--framerate", "-f", required=False, default =  None,
+                        help = "Cameras framerate isn fps")
+    parser.add_argument("--FirstResis", "-r", required=False, default = None,
+                        help = "Resistance of current sensor 1")
+    parser.add_argument("--samplingFreq", "-sf", required=False, default = None,
+                        help = "Sampling frequency")      
+    parser.add_argument("--conversionFactor", required=False, default = None,
+                        help = "Convert B to i")    
+    parser.add_argument('-d', '--debug',
+                        help="Print lots of debugging statements",
+                        action="store_const", dest="loglevel",
+                        const=logging.DEBUG,
+                        default=logging.WARNING)
+    parser.add_argument('-v', '--verbose',help="Be verbose",
+                        action="store_const", dest="loglevel",
+                        const=logging.INFO)
+    args = parser.parse_args()
+
+
+    args.buffer_size_cfg = int(config[args.user]["buffer_size_cfg"] )
+    args.chans_in = int(config[args.user]["chans_in"] )
+    args.time = int(config[args.user]["time"] )
+    args.exposure = int(config[args.user]["exposure"]) 
+    args.framerate =int( config[args.user]["framerate"]) 
+    args.FirstResis = float(config[args.user]["FirstResis"]) 
+    args.samplingFreq = int( config[args.user]["samplingFreq"])
+    args.conversionFactor = float( config[args.user]["conversionFactor"])
+
+    isExist = os.path.exists(args.path)
+
+    if not isExist:
+    # Create a new directory because it does not exist
+        os.makedirs(args.path)
+
+    #launch graph
+    logging.basicConfig(
+                    format='%(levelname)s:%(message)s',
+                    level=args.loglevel)
+
+    logging.info(f'Using: {args.user} configuration')
+
+    #pymain(args, logging)
+
+    app = QtWidgets.QApplication(sys.argv)
+    w = App(args, logging)
+    sys.exit(app.exec())
 
 

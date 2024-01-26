@@ -49,8 +49,8 @@ class positionScaling(QThread):
     def initMag(self,x,y):
 
 
-        x = x*self.m*2048/480
-        y = (y*1536/480)*self.m
+        x = x*self.m*2048/342 #342, 256
+        y = (y*1536/256)*self.m
 
         x_idx = np.argmin(np.abs((self.rows-np.round(x,5))))
         y_idx = np.argmin(np.abs((self.columns-np.round(y,5))))
