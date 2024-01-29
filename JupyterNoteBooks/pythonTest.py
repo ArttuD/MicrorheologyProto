@@ -35,14 +35,11 @@ class positionScaling(QThread):
         self.position = None
         self.root = "./data/One_coil.csv"
         self.m = 3.5/(10*3.3*0.3)*1e-6
-        #self.emaFilter = EMA(0.85)
         
         self.tracker = None
         self.past = 0
 
         self.B, self.rows, self.columns = self.load_csv(self.root)
-
-
         self.i = 0
 
     def run(self):
@@ -56,15 +53,14 @@ class positionScaling(QThread):
 
             if (self.x != x_prev) :
                 print("new updates")
-                print("model emiting")
-                self.magData.emit(1.0)
+                self.findPoint(self.x, self.y)
+
 
             x_prev = self.x
             y_prev = self.y
 
             if self.ctr["closing"]:
                 break
-
             
             time.sleep(0.5)
 
@@ -104,43 +100,15 @@ class positionScaling(QThread):
         self.past = self.B[x_idx, y_idx]
         #print("coords: ", x, y, "\nidx", x_idx, y_idx,"\n Mag", self.past, "\n----------------")
 
-    #def addCamera(self,camera):
-    #    self.tracker = camera
-    #    self.tracker.coordsScaler.connect(self.receiver)
-
-    #@pyqtSlot(object)
-    def receiver(self, data):
-        """
-        Receive coordinates from Camera
-        """
-        if self.i == 10:
-            x2 = data[1]
-            x1 = data[0]
-            y2 =  data[3]#(1536 - data[3])
-            y1 =  data[2]#(1536 - data[2])
-
-            self.findPoint((x1+x2)/2*self.m,(y1+y2)/2*self.m)
-            self.i = 0
-        else:
-            self.i += 1
-        
-
     def findPoint(self,x,y):
         x_idx = np.argmin(np.abs((self.rows-np.round(x,5))))
         y_idx = np.argmin(np.abs((self.columns-np.round(y,5))))
         current = self.B[x_idx, y_idx]
         error = self.past - current
         self.past = current
-        #print("coords: ", x, y, "\nidx", x_idx, y_idx,"\n Mag", self.past, "\n----------------")
-        self.emitData(error)
+        self.magData.emit(error)
     
-    @pyqtSlot(float)
-    def emitData(self):
-        self.magData.emit(1)
 
-    @pyqtSlot(np.ndarray)
-    def receiver_coord(self, vlaue):
-        print("model received coords")
 
 class sender(QThread):
 
@@ -167,7 +135,6 @@ class sender(QThread):
     
 class App(QWidget):
 
-    coords_signal = pyqtSignal(np.ndarray)
 
     def __init__(self) -> None:
         super().__init__()
@@ -184,7 +151,6 @@ class App(QWidget):
 
         self.model = positionScaling(self.model_ctr)
         self.model.magData.connect(self.receive_model)
-        self.coords_signal.connect(self.model.receiver_coord)
         
         self.process_model = QtCore.QThread()
         self.model.moveToThread(self.process_model)
@@ -252,7 +218,16 @@ if __name__ == '__main__':
 
 
 
-"""
+""""
+    def process_coords(self, data):
+        Receive coordinates from Camera
+        x2 = data[1]
+        x1 = data[0]
+        y2 =  data[3]#(1536 - data[3])
+        y1 =  data[2]#(1536 - data[2])
+
+        self.findPoint((x1+x2)/2*self.m,(y1+y2)/2*self.m)
+
 def camera_saving(event_saver, q, path, width, height, ending):
 
     print("in creating saver")
