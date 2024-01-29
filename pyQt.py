@@ -20,7 +20,7 @@ from queue import Queue
 from NiDriver import niDevice
 from baslerControl import baslerCam
 from Modeling import positionScaling
-from tools import camera_saving
+from tools.tools import camera_saving
 
 
 
@@ -43,28 +43,17 @@ class App(QWidget):
 
 
         #control_dicts
-        self.cam_ctr = {"close": False, "mode": 0, "save": False}
-        self.ni_ctr = {"close": False, "mode": 0, "res": 0.26, "cur": 0, "save": False, "scaler": 1}
+        self.cam_ctr = {"close": False, "mode": 0, "save": False, "track": False}
+        self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False,"res": 0.26, "cur": 0, "save": False, "scaler": 1, "feedback": False}
         self.model_ctr = {"closing": False, "x": 0., "y": 0.}
-
-
+        self.ctr = {"ni" : False, "camera" : False, "save" : False, "model" : False, "draw": False}
+        
         #UI geometry
         self.left = 0; self.top = 0
         self.width = 900; self.height = 900
         self.imgCounter = 0
 
         self.samplingHz = args.buffer_size_cfg/(args.samplingFreq)
-
-        #Flags
-        self.ni_flag = False
-        self.camera_flag = False
-        self.saveFlag = False
-        self.modelFlag = False
-
-        self.drawFlag = False
-        self.trackFlag = False
-        self.calibFlag = False
-        self.feedBackFlag = False
 
         #Init driver and signal pipe
         self.driver = niDevice(self.args, self.ni_ctr)
@@ -78,7 +67,6 @@ class App(QWidget):
 
         #Init driver and signal pipe
         self.cam = baslerCam(self.args, self.cam_ctr)
-
         self.cam.changePixmap.connect(self.setImage)
         self.cam.position.connect(self.receiveTrackData) #signals
         self.cam.print_str.connect(self.receive_cam_str) #signals
@@ -378,53 +366,40 @@ class App(QWidget):
         if state == 2:
             self.cam_ctr["saving"] = True 
             self.ni_ctr["saving"] = True 
-            self.saveFlag = True
+            self.ctr["save"] = True
         else:
             self.cam_ctr["saving"] = False 
             self.ni_ctr["saving"] = False
-            self.saveFlag = False
+            self.ctr["save"] = False
 
     def current_feedback(self,state):
         if state == 2:
-            self.feedBackFlag = True 
-            self.driver.feedBackFlag = True
+            self.ni_ctr["feedBackFlag"] = True
         else:
-            self.feedBackFlag = False
-            self.driver.feedBackFlag = False
+            self.ni_ctr["feedBackFlag"] = False
 
     def B_feedback(self,state):
         if state == 2:
-            self.driver.BFeedback = True
+            self.ctr["Bcontrol"] = True
+            self.ni_ctr["Bcontrol"] = True
         else:
-            self.driver.BFeedback = False
+            self.ctr["Bcontrol"] = False
+            self.ni_ctr["Bcontrol"] = False
 
     def checkTrack(self,state):
         if state == 2:
             self.trackFlag = True
-            self.cam.trackFlag = True
+            self.cam_ctr["tracking"] = True
         else:
             self.trackFlag = False
-            self.cam.trackFlag = False
+            self.cam_ctr["tracking"] = True
 
     def changePosition(self,state):
         if state == 2:
-            self.modelFlag = True
-            self.cam.modelFlag = True
-            self.driver.modelFlag = True
-
-            self.model = positionScaling()
-            
-            self.model.addCamera(self.cam)
-            self.model.magData.connect(self.receiveScaler)
+            self.ctr["model"] = True
+            self.model = positionScaling(self.model_ctr)
         else:
-            self.modelFlag = False
-            self.cam.modelFlag = False
-
             self.model = None
-            self.driver.model = None
-
-            self.cam.modelFlag = False
-            self.driver.modelFlag = False
 
     def checkAutoTune(self,state):
         if state == 2:
@@ -442,7 +417,7 @@ class App(QWidget):
         self.logs.info("Snapped Image")
 
         #snap image
-        self.camera_flag = True
+        self.ctr["camera"] = True
         self.cam_ctr["mode"] = 0
 
         self.cam_process.start()
@@ -460,11 +435,10 @@ class App(QWidget):
         """
 
         self.logs.info("Starting Live")
-
         self.streamBtn.setStyleSheet("background-color : white")
         
         #snap image
-        self.camera_flag = True
+        self.ctr["camera"] = True
         self.cam_ctr["mode"] = 1
         self.cam_process.start()
 
@@ -483,7 +457,7 @@ class App(QWidget):
         self.driver.root = self.textField.toPlainText()
 
         #snap image
-        self.ni_flag = True
+        self.ctr["ni"] = True
         self.ni_ctr["save"] = True
         
         #self.event_Ni = mp.Event()
@@ -511,8 +485,8 @@ class App(QWidget):
         self.logs.info("Starting measurements")
         self.printLabel.setText("Measurement started")
 
-        self.camera_flag = True
-        self.ni_flag = True
+        self.ctr["camera"] = True
+        self.ctr["ni"] = True
 
         self.btnStart.setStyleSheet("background-color : white")
 
@@ -524,7 +498,7 @@ class App(QWidget):
         self.cam_ctr["mode"] = 1
         self.ni_ctr["mode"] = 2
 
-        if self.saveFlag: 
+        if self.ctr["save"]: 
             self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
             self.save_thread.start()
 
@@ -571,10 +545,9 @@ class App(QWidget):
 
             self.logs.info("Cropped image from {self.boundaryFinal}")
             
-            if self.modelFlag:
+            if self.ctr["model"]:
                 self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
-            self.snapFlag = False
             self.boundaryFinal = []
             self.clicks = 0
             self.snapbtn.setStyleSheet("background-color : blue")
@@ -613,9 +586,9 @@ class App(QWidget):
         self.logs.info("Stopping the previous event")
         self.btnStop.setStyleSheet("background-color : white")
 
-        if self.ni_flag | self.camera_flag:
+        if self.ctr["ni"] | self.ctr["camera"]:
 
-            if self.ni_flag:
+            if self.ctr["ni"]:
                 self.ni_ctr["close"] = True
                 while self.ni_ctr["close"]:
                     time.wait(0.1)
@@ -623,7 +596,7 @@ class App(QWidget):
                 self.ni_process.terminate()
                 self.ni_process.wait()
 
-            if self.camera_flag:
+            if self.ctr["camera"]:
                 self.cam_ctr["close"] = True
 
                 while self.cam_ctr["close"]:
@@ -639,10 +612,10 @@ class App(QWidget):
                 self.save_event.clear()
                 self.q.clear()
 
-            if (self.saveFlag != False) & (self.ni_ctr["save"] == True):
+            if (self.ctr["save"] != False) & (self.ni_ctr["save"] == True):
                 self.ni_ctr["save"] = False
 
-            #if self.modelFlag:
+            #if self.ctr["model"]:
             #    self.model.initMag(0,0)
 
         else:
@@ -712,7 +685,7 @@ class App(QWidget):
 
         self.receivedFrame = image
 
-        if  (self.trackFlag == True) & (self.snapFlag == False):
+        if  (self.trackFlag == True) & (self.cam_ctr["mode"] == 1):
             self.drawRectangle(QPixmap(QPixmap.fromImage(self.receivedFrame)))
         else:
             self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))

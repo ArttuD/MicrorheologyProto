@@ -28,13 +28,11 @@ class niDevice(QThread, Event):
         self.ctr = ctr
 
         #flags
-        self.BFeedback = False
-        self.modelFlag = False
+        self.BFeedback = ctr["Bcontrol"]
         self.saveFlag = ctr["save"]
 
         self.writeQue = Queue(maxsize=100)
         self.resOneQue = Queue(maxsize=100)
-        self.modelScaler = Queue(maxsize=0)
 
         #parse arguments
         self.totalTime = args.time
@@ -61,8 +59,7 @@ class niDevice(QThread, Event):
 
         self.T2i_coef = 0.071565487
 
-        self.model_coef = self.T2i_coef # args.conversionFactor #Convert 
-        self.scaler =  0.0
+        self.scaler =  0
         self.sequence = None
         self.iteration = 0
 
@@ -70,7 +67,7 @@ class niDevice(QThread, Event):
         self.properties = None
 
     def list_properties(self):
-        self.properties = "Saving to {}. Running with Hall B slope: {}, offset {}, B2i conversion {}, Resistance {}, and model scaling {}".format( self.root, self.Mgcoef, self.MgOffset, self.T2i_coef, self.resistance1, self.model_coef)
+        self.properties = "Saving to {}. Running with Hall B slope: {}, offset {}, B2i conversion {}, Resistance {}, and model scaling {}".format( self.root, self.Mgcoef, self.MgOffset, self.T2i_coef, self.resistance1, self.T2i_coef)
 
     
     def cfg_AO_writer_task(self):
@@ -227,6 +224,7 @@ class niDevice(QThread, Event):
                     if QueIndex%10 == 0:
                         self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]])
                         self.setData.emit(self.s)
+                        self.scaler = 1/self.T2i_coef*self.ctr["scaler"]
 
                     #if model_que.is_empty() == False:
                     #    self.scaler = self.model_que.get()/self.T2i_coef

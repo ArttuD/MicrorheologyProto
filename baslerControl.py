@@ -35,7 +35,6 @@ class baslerCam(QThread, Event):
 
         #flags
         self.trackFlag = False
-        self.modelFlag = False
 
         #variables
         self.frame = None
@@ -206,9 +205,6 @@ class baslerCam(QThread, Event):
         Emits coordinates
         """
         self.position.emit(pos)
-
-        if self.modelFlag:
-            self.coordsScaler.emit(pos)
 
     def emitFrame(self):
         """

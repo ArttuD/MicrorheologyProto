@@ -73,7 +73,7 @@ class positionScaling(QThread):
         n_columns = len(columns)
         B = B.reshape(n_rows, n_columns)
 
-        B = np.hstack((B[:,::-1], B))
+        B = np.hstack((B[:,::-1], B))s
 
         return B, rows, columns
 
