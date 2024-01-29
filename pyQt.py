@@ -26,6 +26,8 @@ from tools import camera_saving
 
 class App(QWidget):
 
+    
+
     def __init__(self, args, logs):
         super().__init__()
 
@@ -42,7 +44,9 @@ class App(QWidget):
 
         #control_dicts
         self.cam_ctr = {"close": False, "mode": 0, "save": False}
-        self.ni_ctr = {"close": False, "mode": 0, "res": 0.26, "cur": 0, "save": False}
+        self.ni_ctr = {"close": False, "mode": 0, "res": 0.26, "cur": 0, "save": False, "scaler": 1}
+        self.model_ctr = {"closing": False, "x": 0., "y": 0.}
+
 
         #UI geometry
         self.left = 0; self.top = 0
@@ -82,6 +86,13 @@ class App(QWidget):
         self.cam_process = QtCore.QThread()
         self.cam.moveToThread(self.cam_process)
         self.cam_process.started.connect(self.cam.run)
+
+        #Connect model
+        self.model = positionScaling(self.model_ctr)
+        self.model.magData.connect(self.receive_model)
+        self.process_model = QtCore.QThread()
+        self.model.moveToThread(self.process_model)
+        self.process_model.started.connect(self.model.run) 
 
         #Variables for drawin
         self.rectangleQue = Queue(maxsize=0)
@@ -473,14 +484,11 @@ class App(QWidget):
 
         #snap image
         self.ni_flag = True
+        self.ni_ctr["save"] = True
         
         #self.event_Ni = mp.Event()
         #self.current_q = mp.Queue()
         #self.resistance_q = mp.Queue()
-
-        if self.cam_ctr["save"]: 
-            self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
-            self.save_thread.start()
 
         if self.calibFlag:
             self.logs.info("Autotune")
@@ -516,7 +524,7 @@ class App(QWidget):
         self.cam_ctr["mode"] = 1
         self.ni_ctr["mode"] = 2
 
-        if self.cam_ctr["save"]: 
+        if self.saveFlag: 
             self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
             self.save_thread.start()
 
@@ -624,13 +632,15 @@ class App(QWidget):
                 self.cam_process.terminate()
                 self.cam_process.wait()
 
+            #stop camera saver
             if self.cam_ctr["saving"]:
                 self.save_event.set()
                 self.save_thread.join()
-
                 self.save_event.clear()
                 self.q.clear()
 
+            if (self.saveFlag != False) & (self.ni_ctr["save"] == True):
+                self.ni_ctr["save"] = False
 
             #if self.modelFlag:
             #    self.model.initMag(0,0)
@@ -699,6 +709,7 @@ class App(QWidget):
             p = pixmap.scaled(720, 720) 
             self.label.setPixmap(p)
 
+
         self.receivedFrame = image
 
         if  (self.trackFlag == True) & (self.snapFlag == False):
@@ -747,6 +758,10 @@ class App(QWidget):
         self.trackY[-1] = (y2+y1)/2 #.scaled(342, 256)
 
         self.TrackLine.setData(self.trackX, self.trackY)
+
+        self.model_ctr["x"] = self.trackX
+        self.model_ctr["y"] = self.trackY
+
         self.rectangleQue.put(np.array([int(data[0]*342/2048), int(data[1]*342/2048), int(data[2]*256/1536), int(data[3]*256/1536)]))
 
     @pyqtSlot(str)
@@ -767,9 +782,8 @@ class App(QWidget):
         self.logs.info("NI dirver: {data_str}")
 
     @pyqtSlot(float)
-    def receiveScaler(self, data):
-        scaler = 1/self.model_coef*data
-        self.model_que.put(scaler)
+    def receive_model(self, data):
+        self.ni_ctr["scaler"] = data
         
 
 """
