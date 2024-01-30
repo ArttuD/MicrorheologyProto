@@ -29,6 +29,7 @@ class niDevice(QThread, Event):
 
         #flags
         self.BFeedback = ctr["Bcontrol"]
+        self.feedBack = ctr["feedback"]
         self.saveFlag = ctr["save"]
 
         self.writeQue = Queue(maxsize=100)
@@ -97,14 +98,18 @@ class niDevice(QThread, Event):
         """
         Calc mean and send to process or close when sequence is over
         """
-        if (self.ctr["closing"] == False) & (self.iteration < self.NSamples):
+        if (self.ctr["close"] == False):
             self.readerStreamIn.read_many_sample(self.bufferIn, self.buffer_size, timeout = nidaqmx.constants.WAIT_INFINITELY)
             self.values = np.append(self.values,np.stack((np.mean(self.bufferIn[0,:]),np.abs(np.mean(self.bufferIn[1,:]))), axis = 0).reshape(2,1), axis = 1)
             self.que.put(self.values[:,-1])
             self.iteration += 1
+            if (self.iteration == self.NSamples):
+                self.que.put(np.array((-1,-1,-1)))
+                self.NiAlReader.stop()
         else:
+            self.que.put(np.array((-1,-1,-1)))
             self.NiAlReader.stop()
-            self.que.put(-1)
+                
             
         return 0
 
@@ -146,17 +151,16 @@ class niDevice(QThread, Event):
 
         self.NiAlReader.start() #start reading
 
-        if self.mode == 0:
+        if self.mode == 1:
             #manual
             self.NSamples = np.inf #Continue until stopped
             ret = self.processTune()
-        elif self.mode == 1:
+        elif self.mode == 0:
             #auto
             self.totalTime = 60
             self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
             self.generateSlope()
-
-
+            self.processAutoTune()
         elif self.mode == 2:
             #meas
             self.totalTime = self.args.time
@@ -165,8 +169,9 @@ class niDevice(QThread, Event):
             #self.SinWave()
             ret = self.process()
 
-        self.NiDWriter.write(False, 1000)
         self.write_empty()
+        self.NiDWriter.write(False, 1000)
+        
 
         self.NiDWriter.stop() 
         self.NiAlWriter.stop()
@@ -181,7 +186,13 @@ class niDevice(QThread, Event):
         self.iteration = 0 
         self.totalTime = self.args.time
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
-        self.ctr["closing"] = False
+
+        #print("waiting to close driver")
+        while self.ctr["close"] == False:
+            time.sleep(0.75)
+             
+        self.ctr["close"] = False
+        print("Ni exit")
 
         return 1
     
@@ -192,12 +203,14 @@ class niDevice(QThread, Event):
         #print(measured, self.scaler)
         measured[0] = 2*measured[0]
         measured[1] = np.abs((measured[1]-self.MgOffset)/self.Mgcoef)
-        if self.feedBackFlag:
+        if self.feedBack:
+            #print("feedback")
             kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
             data = kalmanOut
         else:
             data = (writeC-self.scaler)*self.resistance1
         
+        #print("data", data, "\nscaler", self.scaler, "resistance", self.resistance1, "Data in:", writeC)
         return measured,data
     
     def process(self):
@@ -206,12 +219,13 @@ class niDevice(QThread, Event):
         """
         
         QueIndex = 0
+        #print("scaler dict:", self.ctr["scaler"])
         
         while True:
-            if (self.que.empty() == False) & (QueIndex < self.NSamples):
-
+            if (self.que.empty() == False) :
                 measured = self.que.get()
-                if len(measured) == 1:
+                if measured[0] == -1:
+                    #print("ni break")
                     break
                 else:
                     #fetch from que
@@ -233,6 +247,7 @@ class niDevice(QThread, Event):
                     self.NiAlWriter.write(data,1000)
 
                     #Collect
+                    #print(self.scaler)
                     self.NpyStorage[0,QueIndex] = QueIndex*1/self.FreqRet
                     self.NpyStorage[1,QueIndex] = self.sequence[QueIndex]
                     self.NpyStorage[2,QueIndex] = measured[0]/self.resistance1
@@ -243,6 +258,7 @@ class niDevice(QThread, Event):
             else:
                 time.sleep(0.001)
 
+        self.write_empty()
         #Save log
         if self.saveFlag:
             np.save(os.path.join(self.root,"driver_{}.npy".format(datetime.date.today())), self.NpyStorage)
@@ -260,18 +276,18 @@ class niDevice(QThread, Event):
         self.resistance1 = self.ctr["res"]
 
         while True:
-            if (self.que.empty() == False) & (QueIndex < self.NSamples) :
+            if (self.que.empty() == False) :
                 
                 measured = self.que.get()
-                if len(measured) == 1:
+                if measured[0] == -1:
                     break
                 else:
                     #fetch from que
                     measured, data = self.fetchQue(measured,self.currentToWrite)         
-
                     data = self.checkLimits(data)
                     
                     #write
+                    #print(data)
                     self.NiAlWriter.write(data,1000)
                     
                     #Emit to Qt
@@ -286,20 +302,20 @@ class niDevice(QThread, Event):
             else:
                 time.sleep(0.001)
 
-
+        self.write_empty()
         return 1
 
-    def processAutoTune(self, event):
+    def processAutoTune(self):
         """
         Pipe autocalibration
         """
         
         QueIndex = 0
         while True:
-            if (self.que.empty() == False) & (QueIndex < self.NSamples):
+            if (self.que.empty() == False):
 
                 measured = self.que.get()
-                if len(measured) == 1:
+                if measured[0] == -1:
                     break
                 else:
                     #fetch from que
@@ -325,8 +341,10 @@ class niDevice(QThread, Event):
             else:
                 time.sleep(0.001)
 
+        self.write_empty()
         np.save(os.path.join(self.root,"calib_{}.npy".format(datetime.date.today())), self.NpyStorage)
-        self.fitCalibration()
+        if QueIndex <= (self.NSamples-1):
+            self.fitCalibration()
 
         return 1
             

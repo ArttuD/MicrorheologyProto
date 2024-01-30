@@ -95,7 +95,7 @@ class baslerCam(QThread, Event):
         self.cam.Height.SetValue(self.height)
 
     def run(self):
-        value = self.ctr["closing"]
+        value = self.ctr["mode"]
 
         if value == 0:
             self.snapImage()
@@ -104,9 +104,18 @@ class baslerCam(QThread, Event):
             self.livestream()
 
         elif value == 2:
-            self.recordMeasurement()
+            if self.ctr["tracking"]: 
+                print("created tracker")
+                self.trackFlag = True
+                self.initTracker()
 
-        self.ctr["closing"] = False
+            self.recordMeasurement()
+            print("waiting to close camera")
+            while self.ctr["close"] == False:
+                time.sleep(0.5)
+
+        self.ctr["close"] = False
+        self.trackFlag = False
 
         return 1
 
@@ -132,7 +141,7 @@ class baslerCam(QThread, Event):
         self.cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly) #return the last frame
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
-            if (grab.GrabSucceeded()) & (self.ctr["closing"] == False):
+            if (grab.GrabSucceeded()) & (self.ctr["close"] == False):
                 self.frame = grab.GetArray().astype("uint8")
                 # emit frame
                 self.emitFrame()
@@ -154,37 +163,36 @@ class baslerCam(QThread, Event):
         self.print_str.emit("starting camera")
 
         #Timed snaps and put to que
+
         self.cam.StartGrabbingMax(self.frameCount)
         #self.cam.StartGrabbing(pylon.GrabStrategy_LatestImages)
         i = 0
     
         while self.cam.IsGrabbing():
             grab = self.cam.RetrieveResult(2000,pylon.TimeoutHandling_ThrowException)
-            
-            if (grab.GrabSucceeded()) & (self.event.is_set() == False) & (i <= self.frameCount):
+            if (grab.GrabSucceeded()) & (self.ctr["close"] == False) & (i <= self.frameCount):
                 image = self.converter.Convert(grab)
                 self.frame = image.GetArray()
-                
                 if self.trackFlag:
                     #Send to tracker
                     coords, self.frame = self.trackerTool.main(self.frame)
-                    
+                
                     #Emit coordinates
                     self.emitPosition(coords)
 
                 self.emitFrame()
-
                 grab.Release()
                 i += 1
                 #print("Camera", i)
             else:
+                #print("closing camera")
                 self.cam.StopGrabbing()
                 #_ = self.finishBuffer(i)
                 grab.Release()
+                break
 
         if self.ctr["save"]:
             np.save(os.path.join(self.path,"FrameInfo_{}.npy".format(datetime.date.today())),self.timeStamp)
-
 
         if self.trackFlag:
             self.trackerTool.saveData(self.path)

@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import ffmpeg
 import datetime
+import os
+import time
 
 
 def camera_saving(event_saver, q, path, width, height, ending):
@@ -25,7 +27,7 @@ def camera_saving(event_saver, q, path, width, height, ending):
             out_process.stdin.write( frame.tobytes() )
             idx += 1
         else:
-            if not event_saver.is_set():
+            if event_saver.is_set() == False:
                 time.sleep(0.01)
             else:
                 break

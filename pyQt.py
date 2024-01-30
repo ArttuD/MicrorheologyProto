@@ -26,27 +26,22 @@ from tools.tools import camera_saving
 
 class App(QWidget):
 
-    
-
     def __init__(self, args, logs):
         super().__init__()
 
         self.args = args
         self.logs = logs
 
-        #Events
-        self.event_cam = mp.Event()
-        self.event_NI = mp.Event()
 
-        self.event_saver = mp.Event()
+        self.save_event = mp.Event()
         self.q = mp.Queue()
 
-
+        self.sizeGen = 342
         #control_dicts
-        self.cam_ctr = {"close": False, "mode": 0, "save": False, "track": False}
-        self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False,"res": 0.26, "cur": 0, "save": False, "scaler": 1, "feedback": False}
+        self.cam_ctr = {"close": False, "mode": 0, "save": True, "tracking": False}
+        self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False,"res": 0.26, "cur": 0, "save": True, "scaler": 0, "feedback": True, "calib": False}
         self.model_ctr = {"closing": False, "x": 0., "y": 0.}
-        self.ctr = {"ni" : False, "camera" : False, "save" : False, "model" : False, "draw": False}
+        self.ctr = {"ni" : False, "camera" : False, "save" : True, "model" : False, "draw": False, "mode": 0, "track":False, "calib": False}
         
         #UI geometry
         self.left = 0; self.top = 0
@@ -161,7 +156,7 @@ class App(QWidget):
         h, w = background.shape
         bytesPerLine = 1 * w
         convertToQtFormat = QImage(background,w, h, bytesPerLine, QImage.Format.Format_Grayscale8)
-        p = convertToQtFormat.scaled(342, 256) 
+        p = convertToQtFormat.scaled(self.sizeGen, self.sizeGen) 
         self.label.setPixmap(QPixmap.fromImage(p)) 
 
     def cfg_plots(self):
@@ -322,7 +317,7 @@ class App(QWidget):
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
         self.sliderR1.setRange(0,100)
-        self.sliderR1.setValue(int(self.args.FirstResis*100))
+        self.sliderR1.setValue(int(self.ni_ctr["res"]*100))
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
         self.sliderR1.setTickPosition(QSlider.TickPosition.TicksRight)
@@ -374,9 +369,9 @@ class App(QWidget):
 
     def current_feedback(self,state):
         if state == 2:
-            self.ni_ctr["feedBackFlag"] = True
+            self.ni_ctr["feedback"] = True
         else:
-            self.ni_ctr["feedBackFlag"] = False
+            self.ni_ctr["feedback"] = False
 
     def B_feedback(self,state):
         if state == 2:
@@ -388,10 +383,10 @@ class App(QWidget):
 
     def checkTrack(self,state):
         if state == 2:
-            self.trackFlag = True
+            self.ctr["track"] = True
             self.cam_ctr["tracking"] = True
         else:
-            self.trackFlag = False
+            self.ctr["track"] = False
             self.cam_ctr["tracking"] = True
 
     def changePosition(self,state):
@@ -403,9 +398,11 @@ class App(QWidget):
 
     def checkAutoTune(self,state):
         if state == 2:
-            self.calibFlag = True
+            self.ctr["calib"] = True
+            self.ni_ctr["calib"] = True
         else:
-            self.calibFlag = False
+            self.ctr["calib"] = False
+            self.ni_ctr["calib"] = False
 
     def snapImage(self):
         """
@@ -418,6 +415,7 @@ class App(QWidget):
 
         #snap image
         self.ctr["camera"] = True
+        self.ctr["mode"] = 1
         self.cam_ctr["mode"] = 0
 
         self.cam_process.start()
@@ -433,7 +431,7 @@ class App(QWidget):
         Start camera stream
         *** No problems
         """
-
+        self.ctr["mode"] = 1
         self.logs.info("Starting Live")
         self.streamBtn.setStyleSheet("background-color : white")
         
@@ -442,7 +440,7 @@ class App(QWidget):
         self.cam_ctr["mode"] = 1
         self.cam_process.start()
 
-        self.streamBtn.setStyleSheet("background-color : green")
+        #self.streamBtn.setStyleSheet("background-color : green")
 
 
     def calibrate(self):
@@ -464,14 +462,17 @@ class App(QWidget):
         #self.current_q = mp.Queue()
         #self.resistance_q = mp.Queue()
 
-        if self.calibFlag:
+        if self.ctr["calib"]:
             self.logs.info("Autotune")
             self.printLabel.setText("Calibrating Hall Sensor to the input current...")
             self.ni_ctr["mode"] = 0            
         else:
+            
             self.logs.info("Manul input")
             self.printLabel.setText("Manual current manipulation")
             self.ni_ctr["mode"] = 1
+        
+        self.ctr["mode"] = 1
 
         self.ni_process.start()
 
@@ -482,6 +483,7 @@ class App(QWidget):
             -Fetch path
             -start current driver and camera
         """
+        self.ctr["mode"] = 0
         self.logs.info("Starting measurements")
         self.printLabel.setText("Measurement started")
 
@@ -495,8 +497,9 @@ class App(QWidget):
         self.cam.path = self.textField.toPlainText()
         self.driver.root = self.textField.toPlainText()
 
-        self.cam_ctr["mode"] = 1
+        self.cam_ctr["mode"] = 2
         self.ni_ctr["mode"] = 2
+        self.ctr["mode"] = 0
 
         if self.ctr["save"]: 
             self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
@@ -529,25 +532,26 @@ class App(QWidget):
             x = click.pos().x()
             y = click.pos().y()
             self.boundaryFinal.append([(x,y)])
+            #print(x,y)
             self.clicks += 1
         
         if self.clicks == 2:
 
             self.x1 = self.boundaryFinal[0][0][0] 
-            self.x2 = self.boundaryFinal[1][0][0] 
+            self.x2 = self.boundaryFinal[1][0][0]
+
             self.y1 = self.boundaryFinal[0][0][1]
             self.y2 = self.boundaryFinal[1][0][1]
-            self.drawRectangle(self.label.pixmap())
 
-            if self.trackFlag:
+            if self.ctr["track"]:
+                self.drawRectangle(self.label.pixmap())
                 self.cam.finalboundaries = self.boundaryFinal
                 self.cam.initTracker()
+                if self.ctr["model"]:
+                    self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
             self.logs.info("Cropped image from {self.boundaryFinal}")
             
-            if self.ctr["model"]:
-                self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
-
             self.boundaryFinal = []
             self.clicks = 0
             self.snapbtn.setStyleSheet("background-color : blue")
@@ -571,12 +575,16 @@ class App(QWidget):
 
         width = self.x2 - self.x1
         height = self.y2 - self.y1
+
         painter.drawRect(int(self.x1),int(self.y1), int(width), int(height))
         #painter.drawRect(0,350, int(width), int(height))
         painter.end()
         self.label.setPixmap(canvas)
+
         with self.rectangleQue.mutex:
             self.rectangleQue.queue.clear()
+        
+        self.ctr["mode"] = 0
 
     def stop(self):
         """
@@ -589,28 +597,32 @@ class App(QWidget):
         if self.ctr["ni"] | self.ctr["camera"]:
 
             if self.ctr["ni"]:
+                print("closing NI")
                 self.ni_ctr["close"] = True
                 while self.ni_ctr["close"]:
-                    time.wait(0.1)
+                    time.sleep(0.1)
                 
+                print("terminating thread")
                 self.ni_process.terminate()
                 self.ni_process.wait()
 
             if self.ctr["camera"]:
+                print("closing camera")
                 self.cam_ctr["close"] = True
 
                 while self.cam_ctr["close"]:
-                    time.wait(0.1)
+                    time.sleep(0.1)
                 
                 self.cam_process.terminate()
                 self.cam_process.wait()
 
             #stop camera saver
-            if self.cam_ctr["saving"]:
+            if (self.ctr["save"]) & (self.ctr["mode"] != 1):
+                print("closing saver")
                 self.save_event.set()
                 self.save_thread.join()
-                self.save_event.clear()
-                self.q.clear()
+                #self.save_event.clear()
+                
 
             if (self.ctr["save"] != False) & (self.ni_ctr["save"] == True):
                 self.ni_ctr["save"] = False
@@ -631,6 +643,10 @@ class App(QWidget):
         self.cleanplots()
         self.reset_frames()
         self.imgCounter = 0 
+        self.ctr["mode"] = 0
+
+        self.ctr["ni"] = False
+        self.ctr["camera"] = False
 
         #reset
         self.CurrentValueLabel.setText("Target Current: {:.2f} A \nSource Current: {:.2f} A\nMg sensor: {:.2f} []".format(0,0,0))
@@ -667,28 +683,24 @@ class App(QWidget):
         self.imgCounter += 1
         image = (image).astype(np.uint8)
 
-        if self.ctrl["mode"] != 1:
+        if self.ctr["mode"] != 1:
             self.q.put(image)
 
             # Create a QImage from the normalized image
             if self.imgCounter%5:
                 q_image = QImage(image, image.shape[1], image.shape[0], image.shape[1] * 1, QImage.Format.Format_Grayscale8)
                 pixmap = QPixmap.fromImage(q_image)
-                p = pixmap.scaled(720, 720) 
+                p = pixmap.scaled(self.sizeGen, self.sizeGen) 
                 self.label.setPixmap(p)
         else:
             q_image = QImage(image, image.shape[1], image.shape[0], image.shape[1] * 1, QImage.Format.Format_Grayscale8)
             pixmap = QPixmap.fromImage(q_image)
-            p = pixmap.scaled(720, 720) 
-            self.label.setPixmap(p)
+            p = pixmap.scaled(self.sizeGen, self.sizeGen)#pixmap.scaled(342, 256) 
+            if  (self.ctr["track"] == True) & (self.cam_ctr["mode"] == 1):
+                self.drawRectangle(p)
+            else:
+                self.label.setPixmap(p)
 
-
-        self.receivedFrame = image
-
-        if  (self.trackFlag == True) & (self.cam_ctr["mode"] == 1):
-            self.drawRectangle(QPixmap(QPixmap.fromImage(self.receivedFrame)))
-        else:
-            self.label.setPixmap(QPixmap(QPixmap.fromImage(self.receivedFrame)))
 
     @pyqtSlot(object)
     def receiveData(self,data):
@@ -735,7 +747,7 @@ class App(QWidget):
         self.model_ctr["x"] = self.trackX
         self.model_ctr["y"] = self.trackY
 
-        self.rectangleQue.put(np.array([int(data[0]*342/2048), int(data[1]*342/2048), int(data[2]*256/1536), int(data[3]*256/1536)]))
+        self.rectangleQue.put(np.array([int(data[0]*self.sizeGen/2048), int(data[1]*self.sizeGen/2048), int(data[2]*self.sizeGen/1536), int(data[3]*self.sizeGen/1536)]))
 
     @pyqtSlot(str)
     def receive_NI_str(self,data_str):
