@@ -192,7 +192,7 @@ class niDevice(QThread, Event):
             time.sleep(0.75)
              
         self.ctr["close"] = False
-        print("Ni exit")
+        #print("Ni exit")
 
         return 1
     
@@ -205,10 +205,10 @@ class niDevice(QThread, Event):
         measured[1] = np.abs((measured[1]-self.MgOffset)/self.Mgcoef)
         if self.feedBack:
             #print("feedback")
-            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-self.scaler)*self.resistance1)
+            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-writeC*self.scaler)*self.resistance1)
             data = kalmanOut
         else:
-            data = (writeC-self.scaler)*self.resistance1
+            data = (writeC-writeC*self.scaler)*self.resistance1
         
         #print("data", data, "\nscaler", self.scaler, "resistance", self.resistance1, "Data in:", writeC)
         return measured,data
@@ -238,7 +238,8 @@ class niDevice(QThread, Event):
                     if QueIndex%10 == 0:
                         self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]])
                         self.setData.emit(self.s)
-                        self.scaler = 1/self.T2i_coef*self.ctr["scaler"]
+                        coef = self.ctr["scaler"]
+                        self.scaler = 1/self.T2i_coef*coef
 
                     #if model_que.is_empty() == False:
                     #    self.scaler = self.model_que.get()/self.T2i_coef
@@ -260,8 +261,8 @@ class niDevice(QThread, Event):
 
         self.write_empty()
         #Save log
-        if self.saveFlag:
-            np.save(os.path.join(self.root,"driver_{}.npy".format(datetime.date.today())), self.NpyStorage)
+        #print("Saving Flag", self.saveFlag)
+        np.save(os.path.join(self.root,"driver_{}.npy".format(datetime.date.today())), self.NpyStorage)
 
         return 1
         
@@ -343,7 +344,7 @@ class niDevice(QThread, Event):
 
         self.write_empty()
         np.save(os.path.join(self.root,"calib_{}.npy".format(datetime.date.today())), self.NpyStorage)
-        if QueIndex <= (self.NSamples-1):
+        if QueIndex >= (self.NSamples-1):
             self.fitCalibration()
 
         return 1

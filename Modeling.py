@@ -15,7 +15,7 @@ class positionScaling(QThread):
     def __init__(self, ctr):
 
         super().__init__()
-
+        print("Created model")
         self.ctr = ctr
         self.x = self.ctr["x"]
         self.y = self.ctr["y"]
@@ -30,29 +30,27 @@ class positionScaling(QThread):
         self.i = 0
 
     def run(self):
-        print("model")
         x_prev = self.x
         y_prev = self.y
         while True:
 
-            self.x = self.ctr["x"]
-            self.y = self.ctr["y"]
+            self.x = self.ctr["x"]*self.m
+            self.y = self.ctr["y"]*self.m
 
-            if (self.x != x_prev) :
-                print("new updates")
+            if (self.x != x_prev):
                 self.findPoint(self.x, self.y)
-
 
             x_prev = self.x
             y_prev = self.y
 
-            if self.ctr["closing"]:
+            if self.ctr["close"]:
                 break
             
-            time.sleep(0.5)
+            time.sleep(0.2)
 
-        print("model done")
-        self.ctr["closing"] = False
+        self.ctr["close"] = False
+
+        return 1
         
 
     def load_csv(self, root):
@@ -78,9 +76,11 @@ class positionScaling(QThread):
         return B, rows, columns
 
     def initMag(self,x,y):
+        self.ctr["x"] =x
+        self.ctr["y"] =x
 
-        x = x*self.m*2048/342 #342, 256
-        y = (y*1536/256)*self.m
+        x = x*self.m#*2048/342 #342, 256
+        y = y*self.m
 
         x_idx = np.argmin(np.abs((self.rows-np.round(x,5))))
         y_idx = np.argmin(np.abs((self.columns-np.round(y,5))))

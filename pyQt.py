@@ -40,7 +40,7 @@ class App(QWidget):
         #control_dicts
         self.cam_ctr = {"close": False, "mode": 0, "save": True, "tracking": False}
         self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False,"res": 0.26, "cur": 0, "save": True, "scaler": 0, "feedback": True, "calib": False}
-        self.model_ctr = {"closing": False, "x": 0., "y": 0.}
+        self.model_ctr = {"close": False, "x": 0., "y": 0.}
         self.ctr = {"ni" : False, "camera" : False, "save" : True, "model" : False, "draw": False, "mode": 0, "track":False, "calib": False}
         
         #UI geometry
@@ -73,9 +73,9 @@ class App(QWidget):
         #Connect model
         self.model = positionScaling(self.model_ctr)
         self.model.magData.connect(self.receive_model)
-        self.process_model = QtCore.QThread()
-        self.model.moveToThread(self.process_model)
-        self.process_model.started.connect(self.model.run) 
+        self.model_process = QtCore.QThread()
+        self.model.moveToThread(self.model_process)
+        self.model_process.started.connect(self.model.run) 
 
         #Variables for drawin
         self.rectangleQue = Queue(maxsize=0)
@@ -85,10 +85,10 @@ class App(QWidget):
         self.pen.setWidth(5)
         self.pen.setColor(QtGui.QColor("#EB5160")) 
 
-        self.model = None
-
         #cfg GUI
         self.initUI()
+
+        self
         
 
 
@@ -359,12 +359,12 @@ class App(QWidget):
 
     def data_saving(self,state):
         if state == 2:
-            self.cam_ctr["saving"] = True 
-            self.ni_ctr["saving"] = True 
+            self.cam_ctr["save"] = True 
+            self.ni_ctr["save"] = True 
             self.ctr["save"] = True
         else:
-            self.cam_ctr["saving"] = False 
-            self.ni_ctr["saving"] = False
+            self.cam_ctr["save"] = False 
+            self.ni_ctr["save"] = False
             self.ctr["save"] = False
 
     def current_feedback(self,state):
@@ -391,10 +391,9 @@ class App(QWidget):
 
     def changePosition(self,state):
         if state == 2:
-            self.ctr["model"] = True
-            self.model = positionScaling(self.model_ctr)
+            self.ctr["model"] = True 
         else:
-            self.model = None
+            self.ctr["model"] = False
 
     def checkAutoTune(self,state):
         if state == 2:
@@ -505,6 +504,11 @@ class App(QWidget):
             self.save_thread = mp.Process(target= camera_saving, args=(self.save_event, self.q, self.textField.toPlainText(), 2048, 1536, "main",))
             self.save_thread.start()
 
+        #print("model flag", self.ctr["model"])
+        if self.ctr["model"]:
+            #print("started model")
+            self.model_process.start()
+
         self.ni_process.start()
         self.cam_process.start()
 
@@ -548,6 +552,7 @@ class App(QWidget):
                 self.cam.finalboundaries = self.boundaryFinal
                 self.cam.initTracker()
                 if self.ctr["model"]:
+                    #print("model rescaled")
                     self.model.initMag(np.abs((self.x2+self.x1)/2),np.abs(((self.y2+self.y1)/2)))
 
             self.logs.info("Cropped image from {self.boundaryFinal}")
@@ -615,6 +620,15 @@ class App(QWidget):
                 
                 self.cam_process.terminate()
                 self.cam_process.wait()
+
+            if (self.ctr["model"]) & (self.ctr["mode"] != 1):
+                self.model_ctr["close"] = True
+
+                while self.model_ctr["close"]:
+                    time.sleep(0.1)
+                
+                self.model_process.terminate()
+                self.model_process.wait()
 
             #stop camera saver
             if (self.ctr["save"]) & (self.ctr["mode"] != 1):
@@ -744,10 +758,10 @@ class App(QWidget):
 
         self.TrackLine.setData(self.trackX, self.trackY)
 
-        self.model_ctr["x"] = self.trackX
-        self.model_ctr["y"] = self.trackY
+        self.model_ctr["x"] = self.trackX[-1]
+        self.model_ctr["y"] = self.trackY[-1]
 
-        self.rectangleQue.put(np.array([int(data[0]*self.sizeGen/2048), int(data[1]*self.sizeGen/2048), int(data[2]*self.sizeGen/1536), int(data[3]*self.sizeGen/1536)]))
+        #self.rectangleQue.put(np.array([int(data[0]*self.sizeGen/2048), int(data[1]*self.sizeGen/2048), int(data[2]*self.sizeGen/1536), int(data[3]*self.sizeGen/1536)]))
 
     @pyqtSlot(str)
     def receive_NI_str(self,data_str):
@@ -768,7 +782,8 @@ class App(QWidget):
 
     @pyqtSlot(float)
     def receive_model(self, data):
-        self.ni_ctr["scaler"] = data
+        if data != 0:
+            self.ni_ctr["scaler"] = data
         
 
 """
