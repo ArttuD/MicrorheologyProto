@@ -36,10 +36,14 @@ class App(QWidget):
         self.save_event = mp.Event()
         self.q = mp.Queue()
 
+        self.res_I = 0.27
+        self.res_B = 0.41
+
         self.sizeGen = 342
         #control_dicts
         self.cam_ctr = {"close": False, "mode": 0, "save": True, "tracking": False}
-        self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False,"res": 0.26, "cur": 0, "save": True, "scaler": 0, "feedback": True, "calib": False}
+        self.ni_ctr = {"close": False, "mode": 0, "Bcontrol": False, "save": True, "feedback": True, "calib": False}
+        self.ni_value_ctr = {"res": self.res_I, "cur": 0, "scaler": 0}
         self.model_ctr = {"close": False, "x": 0., "y": 0.}
         self.ctr = {"ni" : False, "camera" : False, "save" : True, "model" : False, "draw": False, "mode": 0, "track":False, "calib": False}
         
@@ -51,7 +55,7 @@ class App(QWidget):
         self.samplingHz = args.buffer_size_cfg/(args.samplingFreq)
 
         #Init driver and signal pipe
-        self.driver = niDevice(self.args, self.ni_ctr)
+        self.driver = niDevice(self.args, self.ni_ctr, self.ni_value_ctr)
 
         self.driver.setData.connect(self.receiveData) #signals
         self.driver.print_str.connect(self.receive_NI_str) #signals
@@ -317,7 +321,7 @@ class App(QWidget):
         self.Slider1Layout = QVBoxLayout()
         self.sliderR1 = QSlider(Qt.Orientation.Vertical, self)
         self.sliderR1.setRange(0,100)
-        self.sliderR1.setValue(int(self.ni_ctr["res"]*100))
+        self.sliderR1.setValue(int(self.ni_value_ctr["res"]*100))
         self.sliderR1.setSingleStep(1)
         self.sliderR1.setPageStep(1)
         self.sliderR1.setTickPosition(QSlider.TickPosition.TicksRight)
@@ -377,9 +381,13 @@ class App(QWidget):
         if state == 2:
             self.ctr["Bcontrol"] = True
             self.ni_ctr["Bcontrol"] = True
+            self.ni_value_ctr["res"] = self.res_B
+            self.sliderR1.setValue(int(self.ni_value_ctr["res"]*100))
         else:
             self.ctr["Bcontrol"] = False
             self.ni_ctr["Bcontrol"] = False
+            self.ni_value_ctr["res"] = self.res_I
+            self.sliderR1.setValue(int(self.ni_value_ctr["res"]*100))
 
     def checkTrack(self,state):
         if state == 2:
@@ -515,12 +523,13 @@ class App(QWidget):
     def updateI(self, value):
         #Update input current
         self.sliderILabel.setText(f'Current value: {value/100}')
-        self.ni_ctr["cur"] = value/100
+        self.ni_value_ctr["cur"] = value/100
 
     def updateR(self,value):
         #Update resistance
         self.sliderR1Label.setText(f'Resistance 1 value: {value/100}')
-        self.ni_ctr["res"] = value/100
+
+        self.ni_value_ctr["res"] = value/100
 
     def reset_frames(self):
         self.set_black_screen()
@@ -783,7 +792,7 @@ class App(QWidget):
     @pyqtSlot(float)
     def receive_model(self, data):
         if data != 0:
-            self.ni_ctr["scaler"] = data
+            self.ni_value_ctr["scaler"] = data
         
 
 """

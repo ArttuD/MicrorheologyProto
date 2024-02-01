@@ -22,15 +22,16 @@ class niDevice(QThread, Event):
     print_str = pyqtSignal(str) #self.print_str.emit
 
 
-    def __init__(self, args, ctr):
+    def __init__(self, args, ctr, value_ctr):
         super().__init__()
         self.args = args
         self.ctr = ctr
+        self.value_ctr = value_ctr
 
-        #flags
-        self.BFeedback = ctr["Bcontrol"]
-        self.feedBack = ctr["feedback"]
-        self.saveFlag = ctr["save"]
+        self.mode = None
+        self.saveFlag = None
+        self.feedBack = None
+        self.resistance1 = self.value_ctr["res"]
 
         self.writeQue = Queue(maxsize=100)
         self.resOneQue = Queue(maxsize=100)
@@ -38,7 +39,6 @@ class niDevice(QThread, Event):
         #parse arguments
         self.totalTime = args.time
         self.root = args.path
-        self.resistance1 = self.args.FirstResis 
         self.buffer_size = round(args.buffer_size_cfg)
         self.samplingFreq = args.samplingFreq
         self.chans_in = args.chans_in
@@ -58,13 +58,12 @@ class niDevice(QThread, Event):
         self.Mgcoef =  15 #Convert 
         self.MgOffset = 2.5
 
-        self.T2i_coef = 0.071565487
+        self.T2i_coef = 0.28
 
         self.scaler =  0
         self.sequence = None
         self.iteration = 0
 
-        self.model = None
         self.properties = None
 
     def list_properties(self):
@@ -133,9 +132,12 @@ class niDevice(QThread, Event):
 
         self.mode = self.ctr["mode"]
         self.saveFlag = self.ctr["save"]
-        self.resistance1 = self.ctr["res"]
+        self.feedBack = self.ctr["feedback"]
+        self.B_feedback = self.ctr["Bcontrol"]
+        self.resistance1 = self.value_ctr["res"]
 
-        self.kalman = KalmanF(self.BFeedback,offset=0.012, freq= self.FreqRet)
+
+        self.kalman = KalmanF(self.B_feedback,offset=0.012, freq= self.FreqRet)
 
         self.initTasks()
         """
@@ -186,6 +188,7 @@ class niDevice(QThread, Event):
         self.iteration = 0 
         self.totalTime = self.args.time
         self.NSamples = int(self.samplingFreq*self.totalTime/self.buffer_size)
+        self.value_ctr["scaler"] = 0
 
         #print("waiting to close driver")
         while self.ctr["close"] == False:
@@ -202,16 +205,17 @@ class niDevice(QThread, Event):
         """
         #print(measured, self.scaler)
         measured[0] = 2*measured[0]
-        measured[1] = np.abs((measured[1]-self.MgOffset)/self.Mgcoef)
+        measured[1] = (measured[1]-self.MgOffset)/self.Mgcoef #print("feedback")
         if self.feedBack:
-            #print("feedback")
-            kalmanOut =  self.kalman.filtering(np.array([measured[0],measured[1]/self.T2i_coef*self.resistance1]), (writeC-writeC*self.scaler)*self.resistance1)
-            data = kalmanOut
+            #print(measured[0], measured[1], (writeC-writeC*self.scaler)*self.resistance1)
+            kalmanOut =  self.kalman.filtering(np.array([measured[0], measured[1]/self.T2i_coef]), (writeC-writeC*self.scaler)*self.resistance1)
+            data = kalmanOut #*self.resistance1
         else:
             data = (writeC-writeC*self.scaler)*self.resistance1
         
         #print("data", data, "\nscaler", self.scaler, "resistance", self.resistance1, "Data in:", writeC)
         return measured,data
+
     
     def process(self):
         """
@@ -238,8 +242,8 @@ class niDevice(QThread, Event):
                     if QueIndex%10 == 0:
                         self.s  = np.array([QueIndex, self.sequence[QueIndex], measured[0]/self.resistance1, measured[1]])
                         self.setData.emit(self.s)
-                        coef = self.ctr["scaler"]
-                        self.scaler = 1/self.T2i_coef*coef
+                        coef = self.value_ctr["scaler"]
+                        self.scaler = coef#1/self.T2i_coef*coef
 
                     #if model_que.is_empty() == False:
                     #    self.scaler = self.model_que.get()/self.T2i_coef
@@ -273,8 +277,8 @@ class niDevice(QThread, Event):
 
         QueIndex = 0
 
-        self.currentToWrite = self.ctr["cur"]
-        self.resistance1 = self.ctr["res"]
+        self.currentToWrite = self.value_ctr["cur"]
+        self.resistance1 = self.value_ctr["res"]
 
         while True:
             if (self.que.empty() == False) :
@@ -284,7 +288,7 @@ class niDevice(QThread, Event):
                     break
                 else:
                     #fetch from que
-                    measured, data = self.fetchQue(measured,self.currentToWrite)         
+                    measured, data = self.fetchQue(measured, self.currentToWrite)         
                     data = self.checkLimits(data)
                     
                     #write
@@ -296,8 +300,8 @@ class niDevice(QThread, Event):
                         self.s  = np.array([self.iteration, self.currentToWrite, measured[0]/self.resistance1, measured[1]])
                         self.setData.emit(self.s)
 
-                        self.currentToWrite = self.ctr["cur"]
-                        self.resistance1 = self.ctr["res"]
+                        self.currentToWrite = self.value_ctr["cur"]
+                        self.resistance1 = self.value_ctr["res"]
 
                     QueIndex += 1
             else:
@@ -321,7 +325,6 @@ class niDevice(QThread, Event):
                 else:
                     #fetch from que
                     measured, data = self.fetchQue(measured,self.sequence[QueIndex])   
-
                     data = self.checkLimits(data)
 
                     #write
@@ -354,7 +357,7 @@ class niDevice(QThread, Event):
 
         maxIndex = np.where(self.NpyStorage[2,:] >=0.5)[0][0]
 
-        x = self.NpyStorage[2,self.cutOFF:maxIndex]
+        x = self.NpyStorage[2,self.cutOFF:maxIndex]*self.resistance1
         y = self.NpyStorage[3,self.cutOFF:maxIndex]
 
         k, b= np.polyfit(x,y,1)

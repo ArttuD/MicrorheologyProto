@@ -80,6 +80,7 @@ class PIDcontroller():
         self.dt = 1/freq
     
     def PID(self, meas, aim):
+
         value = self.emaFilter.filterNow(meas[0])
         self.error = aim-value
 
@@ -101,29 +102,31 @@ class PIDMGcontroller():
     
     def __init__(self,freq):
         print("Created MG controller")
-        self.kp = 21
-        self.ki = 600
-        self.kd = 0.0000007
+        self.kp = 20#10#25
+        self.ki = 0#200 #30
+        self.kd = 0#0.00001 #0.075
+
+        #self.kp = 21
+        #self.ki = 600
+        #self.kd = 0.0000007
 
         self.integral = 0
         self.past=0
         self.error = None
-        self.emaFilter = EMA(0.40)
+        self.emaFilter = EMA(0.3)
         self.dt = 1/freq
     
     
     def PID(self, meas, aim):
-        value = self.emaFilter.filterNow(meas[1])
-        self.error = aim-value
 
+        value = meas[1]#self.emaFilter.filterNow()
+        self.error = aim-value
         prop = self.kp*self.error
         self.integral += self.ki*self.error*self.dt
         derivative = self.kd*(self.past-self.error)/self.dt
         self.past = self.error
 
-        return prop+self.integral+derivative
-
-        return prop+self.integral+derivative+aim
+        return prop +self.integral+derivative + aim
 
 
 
@@ -154,7 +157,7 @@ class alphaBeta():
 
     def filterNow(self,xm):
 
-        self.xk = self.xk_1 + (self.vk_1*self.dt);
+        self.xk = self.xk_1 + (self.vk_1*self.dt)
         self.vk = self.vk_1
 
         self.rk = xm - self.xk
